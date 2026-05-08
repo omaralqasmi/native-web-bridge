@@ -1,0 +1,14 @@
+# Web
+node_modules/
+dist/
+
+# iOS
+.build/
+.swiftpm/
+
+# Android
+native-web-bridge-android/build/
+.gradle/
+
+# OS Files
+.DS_Store
