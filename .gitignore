@@ -1,6 +1,5 @@
 # Web
 node_modules/
-dist/
 
 # iOS
 .build/
