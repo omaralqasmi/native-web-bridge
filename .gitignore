@@ -7,7 +7,6 @@ node_modules/
 
 # Android
 native-web-bridge-android/build/
-.gradle/
 
 # OS Files
 .DS_Store
