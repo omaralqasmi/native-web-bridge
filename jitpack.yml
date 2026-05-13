@@ -1,4 +1,4 @@
 jdk:
   - openjdk17
 install:
-  - ./gradlew :native-web-bridge-android:publishToMavenLocal
+  - cd native-web-bridge-android && chmod +x gradlew && ./gradlew publishToMavenLocal
