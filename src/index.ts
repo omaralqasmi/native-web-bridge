@@ -23,6 +23,8 @@ export class NativeWebBridge {
 
     private handlers = new Map<string, (payload: any) => any>();
     private listeners = new Map<string, Set<(payload: any) => void>>();
+    
+    // The Web Queue System
     private isNativeReady = false;
     private messageQueue: string[] = [];
 
@@ -44,7 +46,7 @@ export class NativeWebBridge {
         (window as any)[this.options.namespace] = {
             receiveMessage: (b64: string) => this.handleIncoming(b64),
             signalReady: () => {
-                this.log("Native signaled readiness. Flushing queue...");
+                this.log("✅ Native signaled readiness! Unlocking web queue...");
                 this.isNativeReady = true;
                 this.flushQueue();
             }
@@ -66,7 +68,7 @@ export class NativeWebBridge {
     private handleIncoming(b64: string) {
         try {
             const message: BridgeMessage = JSON.parse(this.decode(b64));
-            this.log("INCOMING:", message);
+            this.log("⬇️ INCOMING FROM NATIVE:", message);
 
             if (message.type === 'response') {
                 const deferred = this.pendingRequests.get(message.id);
@@ -86,8 +88,10 @@ export class NativeWebBridge {
     private async processIncomingAction(message: BridgeMessage) {
         if (!message.action) return;
 
+        // Trigger event listeners (like event.app.resume)
         this.listeners.get(message.action)?.forEach(cb => cb(message.payload));
 
+        // Trigger registered handlers
         const handler = this.handlers.get(message.action);
         if (handler && message.type === 'request') {
             try {
@@ -102,29 +106,39 @@ export class NativeWebBridge {
     private post(message: BridgeMessage) {
         const b64 = this.encode(JSON.stringify(message));
 
-        if (!this.isNativeReady && message.type !== 'handshake') {
-            this.log("Queueing message until Native is ready:", message.action);
+        // If Android hasn't called signalReady() yet, protect the message!
+        if (!this.isNativeReady) {
+            this.log("⏳ Queueing message until Native is ready:", message.action);
             this.messageQueue.push(b64);
             return;
         }
 
-        const win = window as any;
-        if (win.webkit?.messageHandlers?.iosInterface) {
-            win.webkit.messageHandlers.iosInterface.postMessage(b64);
-        } else if (win.AndroidInterface) {
-            win.AndroidInterface.postMessage(b64);
-        } else {
-            this.log("Warning: No native interface detected.");
-        }
+        this.dispatchToNative(b64);
     }
 
     private flushQueue() {
         while (this.messageQueue.length > 0) {
-            const msg = this.messageQueue.shift();
-            if (msg) {
-                const win = window as any;
-                (win.webkit?.messageHandlers?.iosInterface || win.AndroidInterface)?.postMessage(msg);
+            const b64 = this.messageQueue.shift();
+            if (b64) {
+                this.log("🚀 Flushing queued message to Native...");
+                this.dispatchToNative(b64);
             }
+        }
+    }
+
+    // A unified, try/catch protected dispatcher
+    private dispatchToNative(b64: string) {
+        try {
+            const win = window as any;
+            if (win.webkit?.messageHandlers?.iosInterface) {
+                win.webkit.messageHandlers.iosInterface.postMessage(b64);
+            } else if (win.AndroidInterface) {
+                win.AndroidInterface.postMessage(b64);
+            } else {
+                this.log("⚠️ Warning: No native interface detected. Message lost.");
+            }
+        } catch (e) {
+            console.error("NativeWebBridge: Failed to dispatch to native environment", e);
         }
     }
 
@@ -132,7 +146,6 @@ export class NativeWebBridge {
         if (this.options.debug) console.log("NativeWebBridge 🌉:", ...args);
     }
 
-    // Adjusted to match your original generic signature: Promise<T>
     public request<T = any>(action: string, payload?: any): Promise<T> {
         return new Promise((resolve, reject) => {
             const id = typeof crypto !== 'undefined' && crypto.randomUUID
@@ -167,8 +180,8 @@ export class NativeWebBridge {
     }
 }
 
-// 1. Instantiate the core engine
-const core = new NativeWebBridge({ debug: false });
+// 1. Instantiate the core engine (Debug Mode ON for testing!)
+const core = new NativeWebBridge({ debug: true });
 
 // 2. Export your comprehensive API wrapping the engine
 export const bridge = {
