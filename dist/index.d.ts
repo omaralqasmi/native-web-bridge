@@ -26,6 +26,7 @@ export declare class NativeWebBridge {
     private processIncomingAction;
     private post;
     private flushQueue;
+    private dispatchToNative;
     private log;
     request<T = any>(action: string, payload?: any): Promise<T>;
     sendCommand(action: string, payload?: any): void;
