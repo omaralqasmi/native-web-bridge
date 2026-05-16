@@ -23,23 +23,15 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
     private var isWebReady = false
     private val nativeMessageQueue = mutableListOf<String>()
     private var lastKeyboardState = false
+
     init {
-        // 1. Inject Headless Fragment for Intents
         intentFragment = BridgeIntentFragment()
-        activity.supportFragmentManager.beginTransaction()
-            .add(intentFragment, "BridgeIntentFragment")
-            .commitNowAllowingStateLoss()
-
-        // 2. Attach to WebView
+        activity.supportFragmentManager.beginTransaction().add(intentFragment, "BridgeIntentFragment").commitNowAllowingStateLoss()
         webView.addJavascriptInterface(this, "AndroidInterface")
-
-        // 3. Setup Lifecycle Events
         setupLifecycleHooks()
-
-        // 4. Load all Handlers
-        registerDefaultHandlers()
-
         setupKeyboardListener()
+        setupNetworkListener() // Added for live events!
+        registerDefaultHandlers()
     }
 
     private fun setupLifecycleHooks() {
@@ -48,6 +40,7 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
             override fun onResume(owner: LifecycleOwner) { sendCommandToWeb("event.app.resume") }
         })
     }
+
     private fun setupKeyboardListener() {
         val rootView = activity.findViewById<android.view.View>(android.R.id.content)
         rootView.viewTreeObserver.addOnGlobalLayoutListener {
@@ -55,25 +48,29 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
             rootView.getWindowVisibleDisplayFrame(rect)
             val screenHeight = rootView.height
             val keypadHeight = screenHeight - rect.bottom
-            val isVisible = keypadHeight > screenHeight * 0.15 // 15% threshold
+            val isVisible = keypadHeight > screenHeight * 0.15
             if (isVisible != lastKeyboardState) {
                 lastKeyboardState = isVisible
                 sendCommandToWeb("event.ui.keyboardChanged", JSONObject().apply { put("isVisible", isVisible) })
             }
         }
     }
-    // Call this from your MainActivity's onBackPressedDispatcher
-    fun triggerBackButton() {
-        sendCommandToWeb("event.app.backButton")
+
+    private fun setupNetworkListener() {
+        val cm = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        cm.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) { sendCommandToWeb("event.network.statusChanged", JSONObject().apply { put("connected", true); put("type", "unknown") }) }
+            override fun onLost(network: android.net.Network) { sendCommandToWeb("event.network.statusChanged", JSONObject().apply { put("connected", false); put("type", "none") }) }
+        })
     }
+
+    fun triggerBackButton() { sendCommandToWeb("event.app.backButton") }
     fun triggerDeepLink(url: String) { sendCommandToWeb("event.app.deepLink", JSONObject().apply { put("url", url) }) }
 
     @JavascriptInterface
     fun postMessage(b64String: String) {
         try {
-            val jsonString = String(Base64.decode(b64String, Base64.DEFAULT))
-            val json = JSONObject(jsonString)
-
+            val json = JSONObject(String(Base64.decode(b64String, Base64.DEFAULT)))
             val type = json.optString("type")
             val id = json.optString("id")
             val action = json.optString("action")
@@ -81,459 +78,93 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
 
             if (type == "request" || type == "command") {
                 val handler = customHandlers[action]
-                if (handler != null) {
-                    handler(payload) { resultPayload, errorMsg ->
-                        if (type == "request") sendResponse(id, resultPayload, errorMsg)
-                    }
-                } else {
-                    if (type == "request") sendResponse(id, null, "Action not implemented on Android: $action")
-                }
+                if (handler != null) { handler(payload) { res, err -> if (type == "request") sendResponse(id, res, err) } } 
+                else if (type == "request") sendResponse(id, null, "Action not implemented: $action")
             }
         } catch (e: Exception) { e.printStackTrace() }
     }
 
-    // --- NEW: SAFE DISPATCHER SYSTEM ---
     private fun dispatchToWeb(base64Payload: String) {
         val script = "if(window.NativeBridgeReceiver) { window.NativeBridgeReceiver.receiveMessage('$base64Payload'); }"
-        mainHandler.post {
-            if (isWebReady) {
-                webView.evaluateJavascript(script, null)
-            } else {
-                nativeMessageQueue.add(script)
-            }
-        }
+        mainHandler.post { if (isWebReady) webView.evaluateJavascript(script, null) else nativeMessageQueue.add(script) }
     }
 
     private fun flushNativeQueue() {
-        mainHandler.post {
-            nativeMessageQueue.forEach { script -> webView.evaluateJavascript(script, null) }
-            nativeMessageQueue.clear()
-        }
+        mainHandler.post { nativeMessageQueue.forEach { webView.evaluateJavascript(it, null) }; nativeMessageQueue.clear() }
     }
+
     private fun sendResponse(id: String, payload: Any?, error: String?) {
-        val response = JSONObject().apply {
-            put("id", id); put("type", "response")
-            payload?.let { put("payload", it) }; error?.let { put("error", it) }
-        }
-        val base64 = Base64.encodeToString(response.toString().toByteArray(), Base64.NO_WRAP)
-        mainHandler.post { webView.evaluateJavascript("window.NativeBridgeReceiver.receiveMessage('$base64')", null) }
+        val response = JSONObject().apply { put("id", id); put("type", "response"); payload?.let { put("payload", it) }; error?.let { put("error", it) } }
+        dispatchToWeb(Base64.encodeToString(response.toString().toByteArray(), Base64.NO_WRAP))
     }
 
     fun sendCommandToWeb(action: String, payload: JSONObject? = null) {
-        val request = JSONObject().apply {
-            put("id", UUID.randomUUID().toString()); put("type", "command"); put("action", action)
-            payload?.let { put("payload", it) }
-        }
-        val base64 = Base64.encodeToString(request.toString().toByteArray(), Base64.NO_WRAP)
-        mainHandler.post { webView.evaluateJavascript("window.NativeBridgeReceiver.receiveMessage('$base64')", null) }
+        val request = JSONObject().apply { put("id", UUID.randomUUID().toString()); put("type", "command"); put("action", action); payload?.let { put("payload", it) } }
+        dispatchToWeb(Base64.encodeToString(request.toString().toByteArray(), Base64.NO_WRAP))
     }
 
-    fun registerHandler(action: String, handler: (JSONObject, (Any?, String?) -> Unit) -> Unit) {
-        customHandlers[action] = handler
-    }
+    fun registerHandler(action: String, handler: (JSONObject, (Any?, String?) -> Unit) -> Unit) { customHandlers[action] = handler }
+
     private fun registerDefaultHandlers() {
-        // --- CORE & INFO ---
-        registerHandler("system.core.webReady") { _, cb -> cb(JSONObject().apply { put("success", true) }, null) }
-
-        registerHandler("system.info.getComplete") { _, cb ->
-            val info = JSONObject().apply {
-                put("appVersion", activity.packageManager.getPackageInfo(activity.packageName, 0).versionName)
-                put("osName", "Android")
-                put("osVersion", android.os.Build.VERSION.RELEASE)
-                put("deviceName", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL)
-                put("deviceModel", android.os.Build.MODEL)
-                put("platform", "android")
-            }
-            cb(info, null)
-        }
-        // NEW: Get Device Language Locale (e.g., "en-US")
-        registerHandler("system.device.getLanguage") { _, cb ->
-            cb(java.util.Locale.getDefault().toLanguageTag(), null)
-        }
-
-        // NEW: Get Battery Level
-        registerHandler("system.device.getBatteryLevel") { _, cb ->
-            val bm = activity.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
-            val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
-            cb(level, null)
-        }
-
-        // --- SCREEN & NETWORK (NEW) ---
-        registerHandler("system.screen.setKeepScreenOn") { p, cb ->
-            mainHandler.post {
-                if (p.optBoolean("keepOn", true)) {
-                    activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                } else {
-                    activity.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                }
-                cb(true, null)
-            }
-        }
-
+        registerHandler("system.core.webReady") { _, cb -> isWebReady = true; flushNativeQueue(); cb(JSONObject().apply { put("success", true) }, null) }
+        registerHandler("system.info.getComplete") { _, cb -> cb(JSONObject().apply { put("appVersion", activity.packageManager.getPackageInfo(activity.packageName, 0).versionName); put("osName", "Android"); put("osVersion", android.os.Build.VERSION.RELEASE); put("deviceName", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL); put("deviceModel", android.os.Build.MODEL); put("platform", "android") }, null) }
+        registerHandler("system.device.getLanguage") { _, cb -> cb(java.util.Locale.getDefault().toLanguageTag(), null) }
+        registerHandler("system.device.getBatteryLevel") { _, cb -> cb((activity.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager).getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY), null) }
+        
+        registerHandler("system.screen.setKeepScreenOn") { p, cb -> mainHandler.post { if (p.optBoolean("keepOn", true)) activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) else activity.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); cb(true, null) } }
         registerHandler("system.network.getStatus") { _, cb ->
             val cm = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            val activeNetwork = cm.activeNetwork
-            val caps = cm.getNetworkCapabilities(activeNetwork)
-            
-            val connected = activeNetwork != null && caps != null
-            var type = "none"
-            if (caps != null) {
-                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) type = "wifi"
-                else if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)) type = "cellular"
-            }
-            cb(JSONObject().apply { put("connected", connected); put("type", type) }, null)
-        }
-        // --- NEW: DYNAMIC PERMISSIONS ---
-        fun getManifestPerm(type: String): String? = when(type) {
-            "camera" -> android.Manifest.permission.CAMERA
-            "location" -> android.Manifest.permission.ACCESS_FINE_LOCATION
-            "contacts" -> android.Manifest.permission.READ_CONTACTS
-            else -> null
+            val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+            val type = if (caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true) "wifi" else if (caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) == true) "cellular" else "none"
+            cb(JSONObject().apply { put("connected", caps != null); put("type", type) }, null)
         }
 
-        registerHandler("system.permissions.check") { p, cb ->
-            val perm = getManifestPerm(p.optString("type"))
-            if (perm != null) {
-                cb(androidx.core.content.ContextCompat.checkSelfPermission(activity, perm) == android.content.pm.PackageManager.PERMISSION_GRANTED, null)
-            } else cb(true, null)
-        }
+        fun getManifestPerm(type: String): String? = when(type) { "camera" -> android.Manifest.permission.CAMERA; "location" -> android.Manifest.permission.ACCESS_FINE_LOCATION; "contacts" -> android.Manifest.permission.READ_CONTACTS; else -> null }
+        registerHandler("system.permissions.check") { p, cb -> val perm = getManifestPerm(p.optString("type")); if (perm != null) cb(androidx.core.content.ContextCompat.checkSelfPermission(activity, perm) == android.content.pm.PackageManager.PERMISSION_GRANTED, null) else cb(true, null) }
+        registerHandler("system.permissions.request") { p, cb -> val perm = getManifestPerm(p.optString("type")); if (perm != null) mainHandler.post { intentFragment.requestPermission(perm) { cb(it, null) } } else cb(true, null) }
 
-        registerHandler("system.permissions.request") { p, cb ->
-            val perm = getManifestPerm(p.optString("type"))
-            if (perm != null) {
-                mainHandler.post {
-                    intentFragment.requestPermission(perm) { isGranted -> cb(isGranted, null) }
-                }
-            } else cb(true, null)
-        }
-
-        // --- NEW: CONTACTS ---
-        registerHandler("system.contacts.pick") { _, cb ->
-            val intent = Intent(Intent.ACTION_PICK, android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI)
-            mainHandler.post {
-                intentFragment.launchIntent(intent) { data, err ->
-                    if (err != null) return@launchIntent cb(null, err)
-                    val uri = data?.data
-                    if (uri != null) {
-                        val cursor = activity.contentResolver.query(uri, null, null, null, null)
-                        if (cursor != null && cursor.moveToFirst()) {
-                            val name = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME))
-                            val number = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER))
-                            cursor.close()
-                            cb(JSONObject().apply { put("name", name); put("phoneNumber", number) }, null)
-                        } else cb(null, "Could not read contact")
-                    } else cb(null, "No contact selected")
-                }
-            }
-        }
-
-        // --- NEW: FILES ---
-        registerHandler("system.file.pick") { _, cb ->
-            val intent = Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE) }
-            mainHandler.post {
-                intentFragment.launchIntent(intent) { data, err ->
-                    if (err != null) return@launchIntent cb(null, err)
-                    val uri = data?.data
-                    if (uri != null) {
-                        try {
-                            val stream = activity.contentResolver.openInputStream(uri)
-                            val bytes = stream?.readBytes()
-                            stream?.close()
-                            if (bytes != null) {
-                                val cursor = activity.contentResolver.query(uri, null, null, null, null)
-                                var name = "file"
-                                if (cursor != null && cursor.moveToFirst()) {
-                                    name = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.OpenableColumns.DISPLAY_NAME))
-                                    cursor.close()
-                                }
-                                cb(JSONObject().apply { put("name", name); put("base64", Base64.encodeToString(bytes, Base64.NO_WRAP)) }, null)
-                            } else cb(null, "Failed to read file bytes")
-                        } catch (e: Exception) { cb(null, e.message) }
-                    } else cb(null, "No file selected")
-                }
-            }
-        }
-
-        // --- NEW: LOCATION ---
-        registerHandler("system.location.getCurrent") { _, cb ->
-            try {
-                val lm = activity.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
-                val loc = lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER) 
-                       ?: lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
-                if (loc != null) cb(JSONObject().apply { put("lat", loc.latitude); put("lng", loc.longitude) }, null)
-                else cb(null, "Location unavailable (Make sure GPS is on)")
-            } catch (e: SecurityException) {
-                cb(null, "Location permission missing. Call permissions.request('location') first.")
-            }
-        }
-
-        // --- NEW: AUDIO ---
-        registerHandler("system.audio.playSound") { _, cb ->
-            try {
-                val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
-                android.media.RingtoneManager.getRingtone(activity, uri).play()
-                cb(true, null)
-            } catch (e: Exception) { cb(false, e.message) }
-        }
-
-        // --- CLIPBOARD ---
-        registerHandler("system.clipboard.copy") { p, cb ->
-            val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Copied Text", p.optString("text")))
-            cb(true, null)
-        }
-        registerHandler("system.clipboard.read") { _, cb ->
-            val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            cb(clipboard.primaryClip?.getItemAt(0)?.text?.toString() ?: "", null)
-        }
+        registerHandler("system.contacts.pick") { _, cb -> mainHandler.post { intentFragment.launchIntent(Intent(Intent.ACTION_PICK, android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI)) { data, err -> if (err != null) cb(null, err) else if (data?.data != null) { val c = activity.contentResolver.query(data.data!!, null, null, null, null); if (c != null && c.moveToFirst()) { cb(JSONObject().apply { put("name", c.getString(c.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME))); put("phoneNumber", c.getString(c.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER))) }, null); c.close() } else cb(null, "Error") } } } }
+        registerHandler("system.file.pick") { _, cb -> mainHandler.post { intentFragment.launchIntent(Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE) }) { data, err -> if (err != null) cb(null, err) else if (data?.data != null) { try { val s = activity.contentResolver.openInputStream(data.data!!); val b = s?.readBytes(); s?.close(); cb(JSONObject().apply { put("name", "file"); put("base64", Base64.encodeToString(b, Base64.NO_WRAP)) }, null) } catch (e: Exception) { cb(null, e.message) } } } } }
+        registerHandler("system.location.getCurrent") { _, cb -> try { val lm = activity.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager; val loc = lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER) ?: lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER); if (loc != null) cb(JSONObject().apply { put("lat", loc.latitude); put("lng", loc.longitude) }, null) else cb(null, "Unavailable") } catch (e: SecurityException) { cb(null, "Permission missing") } }
+        registerHandler("system.audio.playSound") { _, cb -> try { android.media.RingtoneManager.getRingtone(activity, android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)).play(); cb(true, null) } catch (e: Exception) { cb(false, e.message) } }
         
-        // --- APP ---
-        registerHandler("system.app.openSettings") { _, cb ->
-            activity.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:" + activity.packageName)))
-            cb(true, null)
-        }
-        registerHandler("system.app.requestRating") { _, cb ->
-            activity.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("market://details?id=${activity.packageName}")))
-            cb(true, null)
-        }
-        registerHandler("system.app.forceUpdate") { p, cb ->
-            val url = p.optString("url", "market://details?id=${activity.packageName}")
-            activity.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)))
-            cb(true, null)
-        }
+        registerHandler("system.app.openSettings") { _, cb -> activity.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:" + activity.packageName))); cb(true, null) }
+        registerHandler("system.app.requestRating") { _, cb -> activity.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("market://details?id=${activity.packageName}"))); cb(true, null) }
+        registerHandler("system.app.forceUpdate") { p, cb -> activity.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(p.optString("url", "market://details?id=${activity.packageName}")))); cb(true, null) }
         registerHandler("system.app.exit") { _, cb -> activity.finishAffinity(); cb(true, null) }
 
-        // --- UI ---
-        registerHandler("system.ui.setTheme") { _, cb -> cb(true, null) } // Usually handled by CSS, hard to force natively on the fly without restart
-        registerHandler("system.ui.getTheme") { _, cb ->
-            val isDark = (activity.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
-            cb(if (isDark) "dark" else "light", null)
-        }
-        registerHandler("system.ui.showToast") { p, cb ->
-            mainHandler.post {
-                val length = if (p.optString("duration") == "long") android.widget.Toast.LENGTH_LONG else android.widget.Toast.LENGTH_SHORT
-                android.widget.Toast.makeText(activity, p.optString("message"), length).show()
-            }
-            cb(true, null)
-        }
-        registerHandler("system.ui.showAlert") { p, cb ->
-            mainHandler.post {
-                androidx.appcompat.app.AlertDialog.Builder(activity)
-                    .setTitle(p.optString("title"))
-                    .setMessage(p.optString("message"))
-                    .setPositiveButton(p.optString("buttonText", "OK")) { _, _ -> cb(true, null) }
-                    .show()
-            }
-        }
-        registerHandler("system.ui.showConfirm") { p, cb ->
-            mainHandler.post {
-                androidx.appcompat.app.AlertDialog.Builder(activity)
-                    .setTitle(p.optString("title"))
-                    .setMessage(p.optString("message"))
-                    .setPositiveButton(p.optString("okText", "Yes")) { _, _ -> cb(true, null) }
-                    .setNegativeButton(p.optString("cancelText", "No")) { _, _ -> cb(false, null) }
-                    .setCancelable(false)
-                    .show()
-            }
-        }
+        registerHandler("system.ui.setTheme") { p, cb -> mainHandler.post { val t = p.optString("theme", "system"); androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(if (t == "dark") androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES else if (t == "light") androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO else androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM); cb(true, null) } }
+        registerHandler("system.ui.getTheme") { _, cb -> cb(if ((activity.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES) "dark" else "light", null) }
+        registerHandler("system.ui.showToast") { p, cb -> mainHandler.post { android.widget.Toast.makeText(activity, p.optString("message"), if (p.optString("duration") == "long") android.widget.Toast.LENGTH_LONG else android.widget.Toast.LENGTH_SHORT).show(); cb(true, null) } }
+        registerHandler("system.ui.showAlert") { p, cb -> mainHandler.post { androidx.appcompat.app.AlertDialog.Builder(activity).setTitle(p.optString("title")).setMessage(p.optString("message")).setPositiveButton(p.optString("buttonText", "OK")) { _, _ -> cb(true, null) }.show() } }
+        registerHandler("system.ui.showConfirm") { p, cb -> mainHandler.post { androidx.appcompat.app.AlertDialog.Builder(activity).setTitle(p.optString("title")).setMessage(p.optString("message")).setPositiveButton(p.optString("okText", "Yes")) { _, _ -> cb(true, null) }.setNegativeButton(p.optString("cancelText", "No")) { _, _ -> cb(false, null) }.setCancelable(false).show() } }
 
-        // --- NOTIFICATIONS ---
         registerHandler("system.notifications.getToken") { _, cb -> cb(prefs.getString("PushToken", null), null) }
-        registerHandler("system.notifications.setToken") { p, cb ->
-            prefs.edit().putString("PushToken", p.optString("token")).apply(); cb(true, null)
-        }
+        registerHandler("system.notifications.setToken") { p, cb -> prefs.edit().putString("PushToken", p.optString("token")).apply(); cb(true, null) }
 
-        // --- MEDIA ---
-        registerHandler("system.media.takePhoto") { p, cb ->
-            val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
-            mainHandler.post {
-                intentFragment.launchIntent(intent) { data, err ->
-                    if (err != null) return@launchIntent cb(null, err)
-                    val bitmap = data?.extras?.get("data") as? android.graphics.Bitmap
-                    if (bitmap != null) {
-                        val stream = java.io.ByteArrayOutputStream()
-                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, stream)
-                        cb(JSONObject().apply { put("base64", Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)) }, null)
-                    } else cb(null, "Failed to capture image")
-                }
-            }
-        }
-        registerHandler("system.media.pickImage") { p, cb ->
-            val intent = Intent(Intent.ACTION_PICK, android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-            mainHandler.post {
-                intentFragment.launchIntent(intent) { data, err ->
-                    if (err != null) return@launchIntent cb(null, err)
-                    val uri = data?.data
-                    if (uri != null) {
-                        try {
-                            val stream = activity.contentResolver.openInputStream(uri)
-                            val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
-                            val out = java.io.ByteArrayOutputStream()
-                            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 60, out)
-                            cb(JSONObject().apply { put("base64", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)) }, null)
-                        } catch (e: Exception) { cb(null, e.message) }
-                    } else cb(null, "No image selected")
-                }
-            }
-        }
-        registerHandler("system.media.downloadImage") { p, cb ->
-            Thread {
-                try {
-                    val connection = java.net.URL(p.optString("url")).openConnection()
-                    connection.connect()
-                    val bitmap = android.graphics.BitmapFactory.decodeStream(connection.getInputStream())
-                    android.provider.MediaStore.Images.Media.insertImage(activity.contentResolver, bitmap, "Downloaded Image", "")
-                    cb(true, null)
-                } catch (e: Exception) { cb(false, e.message) }
-            }.start()
-        }
+        registerHandler("system.media.takePhoto") { p, cb -> mainHandler.post { intentFragment.launchIntent(Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)) { data, _ -> val b = data?.extras?.get("data") as? android.graphics.Bitmap; if (b != null) { val s = java.io.ByteArrayOutputStream(); b.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, s); cb(JSONObject().apply { put("base64", Base64.encodeToString(s.toByteArray(), Base64.NO_WRAP)) }, null) } else cb(null, "Error") } } }
+        registerHandler("system.media.pickImage") { p, cb -> mainHandler.post { intentFragment.launchIntent(Intent(Intent.ACTION_PICK, android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI)) { data, _ -> try { val s = activity.contentResolver.openInputStream(data?.data!!); val b = android.graphics.BitmapFactory.decodeStream(s); val o = java.io.ByteArrayOutputStream(); b.compress(android.graphics.Bitmap.CompressFormat.JPEG, 60, o); cb(JSONObject().apply { put("base64", Base64.encodeToString(o.toByteArray(), Base64.NO_WRAP)) }, null) } catch (e: Exception) { cb(null, e.message) } } } }
+        registerHandler("system.media.downloadImage") { p, cb -> Thread { try { val c = java.net.URL(p.optString("url")).openConnection(); c.connect(); val b = android.graphics.BitmapFactory.decodeStream(c.getInputStream()); android.provider.MediaStore.Images.Media.insertImage(activity.contentResolver, b, "Downloaded", ""); cb(true, null) } catch (e: Exception) { cb(false, e.message) } }.start() }
 
-        // --- SHARE ---
-        registerHandler("system.share.text") { p, cb ->
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, p.optString("text"))
-            }
-            activity.startActivity(Intent.createChooser(intent, p.optString("title", "Share")))
-            cb(true, null)
-        }
-        registerHandler("system.share.link") { p, cb ->
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, p.optString("url"))
-            }
-            activity.startActivity(Intent.createChooser(intent, p.optString("title", "Share Link")))
-            cb(true, null)
-        }
-        registerHandler("system.share.image") { p, cb ->
-            try {
-                val bytes = Base64.decode(p.optString("base64Data"), Base64.DEFAULT)
-                val file = java.io.File(activity.cacheDir, p.optString("fileName", "shared_image.png"))
-                file.writeBytes(bytes)
-                val authority = "${activity.packageName}.webnativebridge.fileprovider"
-                val uri = androidx.core.content.FileProvider.getUriForFile(activity, authority, file)
-                
-                val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "image/*"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                activity.startActivity(Intent.createChooser(intent, "Share Image"))
-                cb(true, null)
-            } catch (e: Exception) { cb(false, e.message) }
-        }
-        registerHandler("system.share.video") { p, cb ->
-            try {
-                val bytes = Base64.decode(p.optString("base64Data"), Base64.DEFAULT)
-                val file = java.io.File(activity.cacheDir, p.optString("fileName", "shared_video.mp4"))
-                file.writeBytes(bytes)
-                val authority = "${activity.packageName}.webnativebridge.fileprovider"
-                val uri = androidx.core.content.FileProvider.getUriForFile(activity, authority, file)
-                
-                val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "video/*"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                activity.startActivity(Intent.createChooser(intent, "Share Video"))
-                cb(true, null)            } catch (e: Exception) { cb(false, e.message) }
-        }
+        registerHandler("system.share.text") { p, cb -> activity.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, p.optString("text")) }, p.optString("title", "Share"))); cb(true, null) }
+        registerHandler("system.share.link") { p, cb -> activity.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, p.optString("url")) }, p.optString("title", "Share"))); cb(true, null) }
+        registerHandler("system.share.image") { p, cb -> try { val file = java.io.File(activity.cacheDir, p.optString("fileName", "shared.png")); file.writeBytes(Base64.decode(p.optString("base64Data"), Base64.DEFAULT)); val uri = androidx.core.content.FileProvider.getUriForFile(activity, "${activity.packageName}.webnativebridge.fileprovider", file); activity.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "image/*"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "Share Image")); cb(true, null) } catch (e: Exception) { cb(false, e.message) } }
+        registerHandler("system.share.video") { p, cb -> try { val file = java.io.File(activity.cacheDir, p.optString("fileName", "shared.mp4")); file.writeBytes(Base64.decode(p.optString("base64Data"), Base64.DEFAULT)); val uri = androidx.core.content.FileProvider.getUriForFile(activity, "${activity.packageName}.webnativebridge.fileprovider", file); activity.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "video/*"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "Share Video")); cb(true, null) } catch (e: Exception) { cb(false, e.message) } }
 
-        // --- COMMUNICATION ---
-        registerHandler("system.communication.dial") { p, cb ->
-            activity.startActivity(Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:${p.optString("phoneNumber")}")))
-            cb(true, null)
-        }
-        registerHandler("system.communication.openBrowser") { p, cb ->
-            activity.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(p.optString("url"))))
-            cb(true, null)
-        }
+        registerHandler("system.communication.dial") { p, cb -> activity.startActivity(Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:${p.optString("phoneNumber")}"))); cb(true, null) }
+        registerHandler("system.communication.openBrowser") { p, cb -> activity.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(p.optString("url")))); cb(true, null) }
 
-        // --- HARDWARE ---
-        registerHandler("system.hardware.haptic") { p, cb ->
-            try {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                    val vibratorManager = activity.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager
-                    vibratorManager.defaultVibrator.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK))
-                } else {
-                    @Suppress("DEPRECATION")
-                    val vibrator = activity.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
-                    vibrator.vibrate(50)
-                }
-                cb(true, null)
-            } catch (e: Exception) { cb(false, e.message) }
-        }
-        registerHandler("system.hardware.flashlight") { p, cb ->
-            try {
-                val camManager = activity.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-                val cameraId = camManager.cameraIdList[0]
-                camManager.setTorchMode(cameraId, p.optBoolean("on", false))
-                cb(true, null)
-            } catch (e: Exception) { cb(false, e.message) }
-        }
+        registerHandler("system.hardware.haptic") { p, cb -> try { val v = activity.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator; v.vibrate(50); cb(true, null) } catch (e: Exception) { cb(false, e.message) } }
+        registerHandler("system.hardware.flashlight") { p, cb -> try { val c = activity.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager; c.setTorchMode(c.cameraIdList[0], p.optBoolean("on", false)); cb(true, null) } catch (e: Exception) { cb(false, e.message) } }
 
-        // --- STORAGE ---
-        registerHandler("system.storage.setItem") { p, cb ->
-            val key = p.optString("key")
-            when (val value = p.get("value")) {
-                is String -> prefs.edit().putString(key, value).apply()
-                is Boolean -> prefs.edit().putBoolean(key, value).apply()
-                is Int -> prefs.edit().putInt(key, value).apply()
-                else -> prefs.edit().putString(key, value.toString()).apply()
-            }
-            cb(true, null)
-        }
-        registerHandler("system.storage.getItem") { p, cb -> cb(prefs.all[p.optString("key")], null) }
+        registerHandler("system.storage.setItem") { p, cb -> prefs.edit().putString(p.optString("key"), p.optString("value")).apply(); cb(true, null) }
+        registerHandler("system.storage.getItem") { p, cb -> cb(prefs.getString(p.optString("key"), null), null) }
+        registerHandler("system.secureStorage.setItem") { p, cb -> try { val s = androidx.security.crypto.EncryptedSharedPreferences.create("SecPrefs", androidx.security.crypto.MasterKeys.getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC), activity, androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV, androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM); s.edit().putString(p.optString("key"), p.optString("value")).apply(); cb(true, null) } catch (e: Exception) { cb(false, e.message) } }
+        registerHandler("system.secureStorage.getItem") { p, cb -> try { val s = androidx.security.crypto.EncryptedSharedPreferences.create("SecPrefs", androidx.security.crypto.MasterKeys.getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC), activity, androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV, androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM); cb(s.getString(p.optString("key"), null), null) } catch (e: Exception) { cb(false, e.message) } }
 
-        // --- SECURE STORAGE ---
-        registerHandler("system.secureStorage.setItem") { p, cb ->
-            try {
-                val masterKeyAlias = androidx.security.crypto.MasterKeys.getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
-                val securePrefs = androidx.security.crypto.EncryptedSharedPreferences.create(
-                    "SecureWebNativeBridge", masterKeyAlias, activity,
-                    androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-                )
-                securePrefs.edit().putString(p.optString("key"), p.optString("value")).apply()
-                cb(true, null)
-            } catch (e: Exception) { cb(false, e.message) }
-        }
-        registerHandler("system.secureStorage.getItem") { p, cb ->
-            try {
-                val masterKeyAlias = androidx.security.crypto.MasterKeys.getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
-                val securePrefs = androidx.security.crypto.EncryptedSharedPreferences.create(
-                    "SecureWebNativeBridge", masterKeyAlias, activity,
-                    androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-                )
-                cb(securePrefs.getString(p.optString("key"), null), null)
-            } catch (e: Exception) { cb(false, e.message) }
-        }
+        registerHandler("system.clipboard.copy") { p, cb -> (activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("Copied", p.optString("text"))); cb(true, null) }
+        registerHandler("system.clipboard.read") { _, cb -> cb((activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClip?.getItemAt(0)?.text?.toString() ?: "", null) }
 
-        // --- BIOMETRICS ---
-        registerHandler("system.biometrics.authenticate") { p, cb ->
-            mainHandler.post {
-                val executor = androidx.core.content.ContextCompat.getMainExecutor(activity)
-                val promptInfo = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("Authentication Required")
-                    .setSubtitle(p.optString("reason", "Please authenticate to continue"))
-                    .setNegativeButtonText("Cancel")
-                    .build()
-
-                val biometricPrompt = androidx.biometric.BiometricPrompt(activity, executor,
-                    object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
-                        override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                            cb(false, errString.toString())
-                        }
-                        override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
-                            cb(true, null)
-                        }
-                        override fun onAuthenticationFailed() {
-                            cb(false, "Authentication failed")
-                        }
-                    })
-                biometricPrompt.authenticate(promptInfo)
-            }
-        }
+        registerHandler("system.biometrics.authenticate") { p, cb -> mainHandler.post { val e = androidx.core.content.ContextCompat.getMainExecutor(activity); androidx.biometric.BiometricPrompt(activity, e, object : androidx.biometric.BiometricPrompt.AuthenticationCallback() { override fun onAuthenticationError(c: Int, s: CharSequence) { cb(false, s.toString()) }; override fun onAuthenticationSucceeded(r: androidx.biometric.BiometricPrompt.AuthenticationResult) { cb(true, null) }; override fun onAuthenticationFailed() { cb(false, "Failed") } }).authenticate(androidx.biometric.BiometricPrompt.PromptInfo.Builder().setTitle("Authenticate").setSubtitle(p.optString("reason", "Please authenticate")).setNegativeButtonText("Cancel").build()) } }
     }
 }
