@@ -162,9 +162,31 @@ exports.bridge = {
     info: {
         getComplete: () => core.request('system.info.getComplete')
     },
+    device: {
+        getLanguage: () => core.request('system.device.getLanguage'),
+        getBatteryLevel: () => core.request('system.device.getBatteryLevel')
+    },
+    screen: {
+        setKeepScreenOn: (keepOn) => core.request('system.screen.setKeepScreenOn', { keepOn })
+    },
+    network: {
+        getStatus: () => core.request('system.network.getStatus')
+    },
     permissions: {
         check: (type) => core.request('system.permissions.check', { type }),
         request: (type) => core.request('system.permissions.request', { type })
+    },
+    contacts: {
+        pick: () => core.request('system.contacts.pick')
+    },
+    location: {
+        getCurrent: () => core.request('system.location.getCurrent')
+    },
+    file: {
+        pick: () => core.request('system.file.pick')
+    },
+    audio: {
+        playSystemSound: () => core.request('system.audio.playSound')
     },
     app: {
         openSettings: () => core.request('system.app.openSettings'),
@@ -214,13 +236,26 @@ exports.bridge = {
         authenticate: (reason = 'Authenticate') => core.request('system.biometrics.authenticate', { reason })
     },
     clipboard: {
-        copy: (text) => core.request('system.clipboard.copy', { text })
+        copy: (text) => core.request('system.clipboard.copy', { text }),
+        read: () => core.request('system.clipboard.read')
+    },
+    custom: {
+        /** Send a custom request to Native and await a response */
+        invoke: (action, payload) => core.request(action, payload),
+        /** Fire a fire-and-forget custom command to Native */
+        send: (action, payload) => core.sendCommand(action, payload),
+        /** Listen for a custom event fired by Native */
+        listen: (action, callback) => core.on(action, callback)
     },
     events: {
         onAppPause: (callback) => core.on('event.app.pause', callback),
         onAppResume: (callback) => core.on('event.app.resume', callback),
         onThemeChanged: (callback) => core.on('event.ui.themeChanged', callback),
         onPushNotification: (callback) => core.on('event.notifications.push', callback),
-        onBackButton: (callback) => core.on('event.app.backButton', callback)
+        onBackButton: (callback) => core.on('event.app.backButton', callback),
+        // NEW: Advanced events
+        onDeepLink: (callback) => core.on('event.app.deepLink', callback),
+        onNetworkChanged: (callback) => core.on('event.network.statusChanged', callback),
+        onKeyboardChanged: (callback) => core.on('event.ui.keyboardChanged', callback)
     }
 };

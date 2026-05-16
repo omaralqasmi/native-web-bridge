@@ -1,12 +1,29 @@
 package com.nativewebbridge
 
-import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 
 class BridgeIntentFragment : Fragment() {
-    var activeCallback: ((Intent?, String?) -> Unit)? = null
+    private var intentCallback: ((Intent?, String?) -> Unit)? = null
+    private var permissionCallback: ((Boolean) -> Unit)? = null
+
+    // Modern Intent Launcher
+    private val intentLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            intentCallback?.invoke(result.data, null)
+        } else {
+            intentCallback?.invoke(null, "User cancelled")
+        }
+        intentCallback = null
+    }
+
+    // Modern Permission Requester
+    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        permissionCallback?.invoke(isGranted)
+        permissionCallback = null
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -14,20 +31,12 @@ class BridgeIntentFragment : Fragment() {
     }
 
     fun launchIntent(intent: Intent, cb: (Intent?, String?) -> Unit) {
-        activeCallback = cb
-        startActivityForResult(intent, 1001)
+        intentCallback = cb
+        intentLauncher.launch(intent)
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 1001) {
-            if (resultCode == Activity.RESULT_OK) {
-                activeCallback?.invoke(data, null)
-            } else {
-                activeCallback?.invoke(null, "User cancelled")
-            }
-            activeCallback = null
-        }
+    fun requestPermission(permission: String, cb: (Boolean) -> Unit) {
+        permissionCallback = cb
+        permissionLauncher.launch(permission)
     }
 }

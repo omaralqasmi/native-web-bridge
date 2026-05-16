@@ -50,9 +50,43 @@ export declare const bridge: {
             platform: string;
         }>;
     };
+    device: {
+        getLanguage: () => Promise<string>;
+        getBatteryLevel: () => Promise<number>;
+    };
+    screen: {
+        setKeepScreenOn: (keepOn: boolean) => Promise<any>;
+    };
+    network: {
+        getStatus: () => Promise<{
+            connected: boolean;
+            type: "wifi" | "cellular" | "none";
+        }>;
+    };
     permissions: {
-        check: (type: "camera" | "location" | "notifications" | "storage") => Promise<boolean>;
-        request: (type: "camera" | "location" | "notifications" | "storage") => Promise<boolean>;
+        check: (type: "camera" | "location" | "notifications" | "storage" | "contacts") => Promise<boolean>;
+        request: (type: "camera" | "location" | "notifications" | "storage" | "contacts") => Promise<boolean>;
+    };
+    contacts: {
+        pick: () => Promise<{
+            name: string;
+            phoneNumber: string;
+        } | null>;
+    };
+    location: {
+        getCurrent: () => Promise<{
+            lat: number;
+            lng: number;
+        }>;
+    };
+    file: {
+        pick: () => Promise<{
+            name: string;
+            base64: string;
+        } | null>;
+    };
+    audio: {
+        playSystemSound: () => Promise<any>;
     };
     app: {
         openSettings: () => Promise<any>;
@@ -112,6 +146,15 @@ export declare const bridge: {
     };
     clipboard: {
         copy: (text: string) => Promise<any>;
+        read: () => Promise<string>;
+    };
+    custom: {
+        /** Send a custom request to Native and await a response */
+        invoke: <T = any>(action: string, payload?: any) => Promise<T>;
+        /** Fire a fire-and-forget custom command to Native */
+        send: (action: string, payload?: any) => void;
+        /** Listen for a custom event fired by Native */
+        listen: (action: string, callback: (payload: any) => void) => () => boolean | undefined;
     };
     events: {
         onAppPause: (callback: () => void) => () => boolean | undefined;
@@ -121,5 +164,15 @@ export declare const bridge: {
         }) => void) => () => boolean | undefined;
         onPushNotification: (callback: (payload: any) => void) => () => boolean | undefined;
         onBackButton: (callback: () => void) => () => boolean | undefined;
+        onDeepLink: (callback: (payload: {
+            url: string;
+        }) => void) => () => boolean | undefined;
+        onNetworkChanged: (callback: (payload: {
+            connected: boolean;
+            type: string;
+        }) => void) => () => boolean | undefined;
+        onKeyboardChanged: (callback: (payload: {
+            isVisible: boolean;
+        }) => void) => () => boolean | undefined;
     };
 };

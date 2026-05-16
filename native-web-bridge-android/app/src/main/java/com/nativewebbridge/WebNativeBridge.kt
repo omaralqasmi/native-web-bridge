@@ -20,7 +20,9 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
     private val mainHandler = Handler(Looper.getMainLooper())
     private val prefs: SharedPreferences = activity.getSharedPreferences("WebNativeBridgeStorage", Context.MODE_PRIVATE)
     private var intentFragment: BridgeIntentFragment
-
+    private var isWebReady = false
+    private val nativeMessageQueue = mutableListOf<String>()
+    private var lastKeyboardState = false
     init {
         // 1. Inject Headless Fragment for Intents
         intentFragment = BridgeIntentFragment()
@@ -36,6 +38,8 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
 
         // 4. Load all Handlers
         registerDefaultHandlers()
+
+        setupKeyboardListener()
     }
 
     private fun setupLifecycleHooks() {
@@ -44,11 +48,25 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
             override fun onResume(owner: LifecycleOwner) { sendCommandToWeb("event.app.resume") }
         })
     }
-
+    private fun setupKeyboardListener() {
+        val rootView = activity.findViewById<android.view.View>(android.R.id.content)
+        rootView.viewTreeObserver.addOnGlobalLayoutListener {
+            val rect = android.graphics.Rect()
+            rootView.getWindowVisibleDisplayFrame(rect)
+            val screenHeight = rootView.height
+            val keypadHeight = screenHeight - rect.bottom
+            val isVisible = keypadHeight > screenHeight * 0.15 // 15% threshold
+            if (isVisible != lastKeyboardState) {
+                lastKeyboardState = isVisible
+                sendCommandToWeb("event.ui.keyboardChanged", JSONObject().apply { put("isVisible", isVisible) })
+            }
+        }
+    }
     // Call this from your MainActivity's onBackPressedDispatcher
     fun triggerBackButton() {
         sendCommandToWeb("event.app.backButton")
     }
+    fun triggerDeepLink(url: String) { sendCommandToWeb("event.app.deepLink", JSONObject().apply { put("url", url) }) }
 
     @JavascriptInterface
     fun postMessage(b64String: String) {
@@ -74,6 +92,24 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
         } catch (e: Exception) { e.printStackTrace() }
     }
 
+    // --- NEW: SAFE DISPATCHER SYSTEM ---
+    private fun dispatchToWeb(base64Payload: String) {
+        val script = "if(window.NativeBridgeReceiver) { window.NativeBridgeReceiver.receiveMessage('$base64Payload'); }"
+        mainHandler.post {
+            if (isWebReady) {
+                webView.evaluateJavascript(script, null)
+            } else {
+                nativeMessageQueue.add(script)
+            }
+        }
+    }
+
+    private fun flushNativeQueue() {
+        mainHandler.post {
+            nativeMessageQueue.forEach { script -> webView.evaluateJavascript(script, null) }
+            nativeMessageQueue.clear()
+        }
+    }
     private fun sendResponse(id: String, payload: Any?, error: String?) {
         val response = JSONObject().apply {
             put("id", id); put("type", "response")
@@ -110,22 +146,141 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
             }
             cb(info, null)
         }
+        // NEW: Get Device Language Locale (e.g., "en-US")
+        registerHandler("system.device.getLanguage") { _, cb ->
+            cb(java.util.Locale.getDefault().toLanguageTag(), null)
+        }
 
-        // --- PERMISSIONS ---
-        registerHandler("system.permissions.check") { p, cb ->
-            val type = p.optString("type")
-            val manifestPerm = when(type) {
-                "camera" -> android.Manifest.permission.CAMERA
-                "location" -> android.Manifest.permission.ACCESS_FINE_LOCATION
-                else -> null
+        // NEW: Get Battery Level
+        registerHandler("system.device.getBatteryLevel") { _, cb ->
+            val bm = activity.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
+            val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            cb(level, null)
+        }
+
+        // --- SCREEN & NETWORK (NEW) ---
+        registerHandler("system.screen.setKeepScreenOn") { p, cb ->
+            mainHandler.post {
+                if (p.optBoolean("keepOn", true)) {
+                    activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    activity.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+                cb(true, null)
             }
-            if (manifestPerm != null) {
-                val granted = androidx.core.content.ContextCompat.checkSelfPermission(activity, manifestPerm) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                cb(granted, null)
+        }
+
+        registerHandler("system.network.getStatus") { _, cb ->
+            val cm = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val activeNetwork = cm.activeNetwork
+            val caps = cm.getNetworkCapabilities(activeNetwork)
+            
+            val connected = activeNetwork != null && caps != null
+            var type = "none"
+            if (caps != null) {
+                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) type = "wifi"
+                else if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)) type = "cellular"
+            }
+            cb(JSONObject().apply { put("connected", connected); put("type", type) }, null)
+        }
+        // --- NEW: DYNAMIC PERMISSIONS ---
+        fun getManifestPerm(type: String): String? = when(type) {
+            "camera" -> android.Manifest.permission.CAMERA
+            "location" -> android.Manifest.permission.ACCESS_FINE_LOCATION
+            "contacts" -> android.Manifest.permission.READ_CONTACTS
+            else -> null
+        }
+
+        registerHandler("system.permissions.check") { p, cb ->
+            val perm = getManifestPerm(p.optString("type"))
+            if (perm != null) {
+                cb(androidx.core.content.ContextCompat.checkSelfPermission(activity, perm) == android.content.pm.PackageManager.PERMISSION_GRANTED, null)
             } else cb(true, null)
         }
-        registerHandler("system.permissions.request") { p, cb -> cb(true, null) } // Can be expanded with ActivityResultContracts later
 
+        registerHandler("system.permissions.request") { p, cb ->
+            val perm = getManifestPerm(p.optString("type"))
+            if (perm != null) {
+                intentFragment.requestPermission(perm) { isGranted -> cb(isGranted, null) }
+            } else cb(true, null)
+        }
+
+        // --- NEW: CONTACTS ---
+        registerHandler("system.contacts.pick") { _, cb ->
+            val intent = Intent(Intent.ACTION_PICK, android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI)
+            intentFragment.launchIntent(intent) { data, err ->
+                if (err != null) return@launchIntent cb(null, err)
+                val uri = data?.data
+                if (uri != null) {
+                    val cursor = activity.contentResolver.query(uri, null, null, null, null)
+                    if (cursor != null && cursor.moveToFirst()) {
+                        val name = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME))
+                        val number = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER))
+                        cursor.close()
+                        cb(JSONObject().apply { put("name", name); put("phoneNumber", number) }, null)
+                    } else cb(null, "Could not read contact")
+                } else cb(null, "No contact selected")
+            }
+        }
+
+        // --- NEW: FILES ---
+        registerHandler("system.file.pick") { _, cb ->
+            val intent = Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE) }
+            intentFragment.launchIntent(intent) { data, err ->
+                if (err != null) return@launchIntent cb(null, err)
+                val uri = data?.data
+                if (uri != null) {
+                    try {
+                        val stream = activity.contentResolver.openInputStream(uri)
+                        val bytes = stream?.readBytes()
+                        stream?.close()
+                        if (bytes != null) {
+                            val cursor = activity.contentResolver.query(uri, null, null, null, null)
+                            var name = "file"
+                            if (cursor != null && cursor.moveToFirst()) {
+                                name = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.OpenableColumns.DISPLAY_NAME))
+                                cursor.close()
+                            }
+                            cb(JSONObject().apply { put("name", name); put("base64", Base64.encodeToString(bytes, Base64.NO_WRAP)) }, null)
+                        } else cb(null, "Failed to read file bytes")
+                    } catch (e: Exception) { cb(null, e.message) }
+                } else cb(null, "No file selected")
+            }
+        }
+
+        // --- NEW: LOCATION ---
+        registerHandler("system.location.getCurrent") { _, cb ->
+            try {
+                val lm = activity.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+                val loc = lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER) 
+                       ?: lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                if (loc != null) cb(JSONObject().apply { put("lat", loc.latitude); put("lng", loc.longitude) }, null)
+                else cb(null, "Location unavailable (Make sure GPS is on)")
+            } catch (e: SecurityException) {
+                cb(null, "Location permission missing. Call permissions.request('location') first.")
+            }
+        }
+
+        // --- NEW: AUDIO ---
+        registerHandler("system.audio.playSound") { _, cb ->
+            try {
+                val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+                android.media.RingtoneManager.getRingtone(activity, uri).play()
+                cb(true, null)
+            } catch (e: Exception) { cb(false, e.message) }
+        }
+
+        // --- CLIPBOARD ---
+        registerHandler("system.clipboard.copy") { p, cb ->
+            val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Copied Text", p.optString("text")))
+            cb(true, null)
+        }
+        registerHandler("system.clipboard.read") { _, cb ->
+            val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cb(clipboard.primaryClip?.getItemAt(0)?.text?.toString() ?: "", null)
+        }
+        
         // --- APP ---
         registerHandler("system.app.openSettings") { _, cb ->
             activity.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:" + activity.packageName)))
@@ -366,13 +521,6 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
                     })
                 biometricPrompt.authenticate(promptInfo)
             }
-        }
-
-        // --- CLIPBOARD ---
-        registerHandler("system.clipboard.copy") { p, cb ->
-            val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Copied Text", p.optString("text")))
-            cb(true, null)
         }
     }
 }

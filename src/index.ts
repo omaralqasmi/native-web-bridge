@@ -194,9 +194,31 @@ export const bridge = {
     info: {
         getComplete: () => core.request<{ appVersion: string, osName: string, osVersion: string, deviceName: string, deviceModel: string, platform: string }>('system.info.getComplete')
     },
+    device: {
+        getLanguage: () => core.request<string>('system.device.getLanguage'),
+        getBatteryLevel: () => core.request<number>('system.device.getBatteryLevel')
+    },
+    screen: {
+        setKeepScreenOn: (keepOn: boolean) => core.request('system.screen.setKeepScreenOn', { keepOn })
+    },
+    network: {
+        getStatus: () => core.request<{ connected: boolean, type: 'wifi' | 'cellular' | 'none' }>('system.network.getStatus')
+    },
     permissions: {
-        check: (type: 'camera' | 'location' | 'notifications' | 'storage') => core.request<boolean>('system.permissions.check', { type }),
-        request: (type: 'camera' | 'location' | 'notifications' | 'storage') => core.request<boolean>('system.permissions.request', { type })
+        check: (type: 'camera' | 'location' | 'notifications' | 'storage' | 'contacts') => core.request<boolean>('system.permissions.check', { type }),
+        request: (type: 'camera' | 'location' | 'notifications' | 'storage'| 'contacts') => core.request<boolean>('system.permissions.request', { type })
+    },
+    contacts: {
+        pick: () => core.request<{ name: string, phoneNumber: string } | null>('system.contacts.pick')
+    },
+    location: {
+        getCurrent: () => core.request<{ lat: number, lng: number }>('system.location.getCurrent')
+    },
+    file: {
+        pick: () => core.request<{ name: string, base64: string } | null>('system.file.pick')
+    },
+    audio: {
+        playSystemSound: () => core.request('system.audio.playSound')
     },
     app: {
         openSettings: () => core.request('system.app.openSettings'),
@@ -246,13 +268,28 @@ export const bridge = {
         authenticate: (reason: string = 'Authenticate') => core.request<boolean>('system.biometrics.authenticate', { reason })
     },
     clipboard: {
-        copy: (text: string) => core.request('system.clipboard.copy', { text })
+        copy: (text: string) => core.request('system.clipboard.copy', { text }),
+        read: () => core.request<string>('system.clipboard.read')
+    },
+    custom: {
+        /** Send a custom request to Native and await a response */
+        invoke: <T = any>(action: string, payload?: any) => core.request<T>(action, payload),
+        
+        /** Fire a fire-and-forget custom command to Native */
+        send: (action: string, payload?: any) => core.sendCommand(action, payload),
+        
+        /** Listen for a custom event fired by Native */
+        listen: (action: string, callback: (payload: any) => void) => core.on(action, callback)
     },
     events: {
         onAppPause: (callback: () => void) => core.on('event.app.pause', callback),
         onAppResume: (callback: () => void) => core.on('event.app.resume', callback),
         onThemeChanged: (callback: (payload: { theme: 'light' | 'dark' }) => void) => core.on('event.ui.themeChanged', callback),
         onPushNotification: (callback: (payload: any) => void) => core.on('event.notifications.push', callback),
-        onBackButton: (callback: () => void) => core.on('event.app.backButton', callback)
-    }
+        onBackButton: (callback: () => void) => core.on('event.app.backButton', callback),
+        // NEW: Advanced events
+        onDeepLink: (callback: (payload: { url: string }) => void) => core.on('event.app.deepLink', callback),
+        onNetworkChanged: (callback: (payload: { connected: boolean, type: string }) => void) => core.on('event.network.statusChanged', callback),
+        onKeyboardChanged: (callback: (payload: { isVisible: boolean }) => void) => core.on('event.ui.keyboardChanged', callback)
+        }
 };
