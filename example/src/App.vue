@@ -67,7 +67,9 @@
             <span class="action-badge"><button @click="execute('file.pick', () => bridge.file.pick())">Pick File</button><button class="btn-info" @click="openDoc('pickFile')">?</button></span>
             <span class="action-badge"><button @click="execute('contacts.pick', () => bridge.contacts.pick())">Pick Contact</button><button class="btn-info" @click="openDoc('pickContact')">?</button></span>
             <span class="action-badge"><button @click="execute('audio.playSystemSound', () => bridge.audio.playSystemSound())">Play Sound</button><button class="btn-info" @click="openDoc('playSystemSound')">?</button></span>
-          </div>
+            <span class="action-badge"><button @click="execute('share.image', shareTestImage)">Share Image</button><button class="btn-info" @click="openDoc('shareImage')">?</button></span>
+            <span class="action-badge"><button @click="execute('share.video', shareTestVideo)">Share Video</button><button class="btn-info" @click="openDoc('shareVideo')">?</button></span>
+                    </div>
 
           <div class="method-group">
             <h3>Storage, Auth & Permissions</h3>
@@ -149,6 +151,18 @@ const logs = ref<LogEntry[]>([]);
 // --- DOCUMENTATION DICTIONARY ---
 interface DocEntry { title: string; why: string; when: string; how: string; }
 const docDB: Record<string, DocEntry> = {
+  shareImage: { 
+    title: 'Share Image', 
+    why: 'To trigger the native OS share sheet with a visual asset.', 
+    when: 'Use this to let users send generated charts, memes, or photos to WhatsApp, Instagram, or Email.', 
+    how: "const base64 = 'iVBORw0K...';\nawait bridge.share.image(base64, 'export.png');" 
+  },
+  shareVideo: { 
+    title: 'Share Video', 
+    why: 'To trigger the native OS share sheet with a video file.', 
+    when: 'Use this to let users export recorded screen captures or generated animations to other apps.', 
+    how: "const base64 = 'AAAAIGZ0...';\nawait bridge.share.video(base64, 'export.mp4');" 
+  },
   customRequest: { title: 'Custom Request', why: 'To trigger proprietary Android logic and wait for a response.', when: 'Use this when your web app needs data from a custom Android API (e.g., a Bluetooth scanner).', how: "const result = await bridge.custom.invoke('custom.scan', { type: 'qr' });" },
   customCommand: { title: 'Custom Command', why: 'To trigger native Android logic without waiting for a reply.', when: 'Use this for "Fire and Forget" actions like tracking analytics natively.', how: "bridge.custom.send('custom.track', { event: 'click' });" },
   signalWebReady: { title: 'Signal Web Ready', why: 'To prevent Race Conditions and dropped messages during boot.', when: 'Call this exactly ONCE in your onMounted hook when the Vue/React app is ready to receive events.', how: 'bridge.core.signalWebReady();' },
@@ -186,6 +200,18 @@ const openDoc = (key: string) => { activeDoc.value = docDB[key]; };
 // --- METHODS ---
 const addLog = (action: string, data: any, isError = false, isEvent = false) => {
   logs.value.unshift({ time: new Date().toLocaleTimeString([], { hour12: false }), action, data, isError, isEvent });
+};
+// --- TEST HELPERS ---
+const shareTestImage = async () => {
+  const redPixelBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  return await bridge.share.image(redPixelBase64, "red_pixel_test.png");
+};
+
+// 👇 ADD THIS VIDEO FUNCTION 👇
+const shareTestVideo = async () => {
+  // A tiny dummy MP4 header in Base64 (just to trigger the share sheet safely)
+  const dummyMp4Base64 = "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMQAAAAxtZGF0AAAAAHAAAABobW9vdgAAAGxtdmhk";
+  return await bridge.share.video(dummyMp4Base64, "dummy_test_video.mp4");
 };
 
 const formatData = (data: any) => {
