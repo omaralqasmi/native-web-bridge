@@ -201,50 +201,56 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
         registerHandler("system.permissions.request") { p, cb ->
             val perm = getManifestPerm(p.optString("type"))
             if (perm != null) {
-                intentFragment.requestPermission(perm) { isGranted -> cb(isGranted, null) }
+                mainHandler.post {
+                    intentFragment.requestPermission(perm) { isGranted -> cb(isGranted, null) }
+                }
             } else cb(true, null)
         }
 
         // --- NEW: CONTACTS ---
         registerHandler("system.contacts.pick") { _, cb ->
             val intent = Intent(Intent.ACTION_PICK, android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI)
-            intentFragment.launchIntent(intent) { data, err ->
-                if (err != null) return@launchIntent cb(null, err)
-                val uri = data?.data
-                if (uri != null) {
-                    val cursor = activity.contentResolver.query(uri, null, null, null, null)
-                    if (cursor != null && cursor.moveToFirst()) {
-                        val name = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME))
-                        val number = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER))
-                        cursor.close()
-                        cb(JSONObject().apply { put("name", name); put("phoneNumber", number) }, null)
-                    } else cb(null, "Could not read contact")
-                } else cb(null, "No contact selected")
+            mainHandler.post {
+                intentFragment.launchIntent(intent) { data, err ->
+                    if (err != null) return@launchIntent cb(null, err)
+                    val uri = data?.data
+                    if (uri != null) {
+                        val cursor = activity.contentResolver.query(uri, null, null, null, null)
+                        if (cursor != null && cursor.moveToFirst()) {
+                            val name = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME))
+                            val number = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER))
+                            cursor.close()
+                            cb(JSONObject().apply { put("name", name); put("phoneNumber", number) }, null)
+                        } else cb(null, "Could not read contact")
+                    } else cb(null, "No contact selected")
+                }
             }
         }
 
         // --- NEW: FILES ---
         registerHandler("system.file.pick") { _, cb ->
             val intent = Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE) }
-            intentFragment.launchIntent(intent) { data, err ->
-                if (err != null) return@launchIntent cb(null, err)
-                val uri = data?.data
-                if (uri != null) {
-                    try {
-                        val stream = activity.contentResolver.openInputStream(uri)
-                        val bytes = stream?.readBytes()
-                        stream?.close()
-                        if (bytes != null) {
-                            val cursor = activity.contentResolver.query(uri, null, null, null, null)
-                            var name = "file"
-                            if (cursor != null && cursor.moveToFirst()) {
-                                name = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.OpenableColumns.DISPLAY_NAME))
-                                cursor.close()
-                            }
-                            cb(JSONObject().apply { put("name", name); put("base64", Base64.encodeToString(bytes, Base64.NO_WRAP)) }, null)
-                        } else cb(null, "Failed to read file bytes")
-                    } catch (e: Exception) { cb(null, e.message) }
-                } else cb(null, "No file selected")
+            mainHandler.post {
+                intentFragment.launchIntent(intent) { data, err ->
+                    if (err != null) return@launchIntent cb(null, err)
+                    val uri = data?.data
+                    if (uri != null) {
+                        try {
+                            val stream = activity.contentResolver.openInputStream(uri)
+                            val bytes = stream?.readBytes()
+                            stream?.close()
+                            if (bytes != null) {
+                                val cursor = activity.contentResolver.query(uri, null, null, null, null)
+                                var name = "file"
+                                if (cursor != null && cursor.moveToFirst()) {
+                                    name = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.OpenableColumns.DISPLAY_NAME))
+                                    cursor.close()
+                                }
+                                cb(JSONObject().apply { put("name", name); put("base64", Base64.encodeToString(bytes, Base64.NO_WRAP)) }, null)
+                            } else cb(null, "Failed to read file bytes")
+                        } catch (e: Exception) { cb(null, e.message) }
+                    } else cb(null, "No file selected")
+                }
             }
         }
 
@@ -340,30 +346,34 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
         // --- MEDIA ---
         registerHandler("system.media.takePhoto") { p, cb ->
             val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
-            intentFragment.launchIntent(intent) { data, err ->
-                if (err != null) return@launchIntent cb(null, err)
-                val bitmap = data?.extras?.get("data") as? android.graphics.Bitmap
-                if (bitmap != null) {
-                    val stream = java.io.ByteArrayOutputStream()
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, stream)
-                    cb(JSONObject().apply { put("base64", Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)) }, null)
-                } else cb(null, "Failed to capture image")
+            mainHandler.post {
+                intentFragment.launchIntent(intent) { data, err ->
+                    if (err != null) return@launchIntent cb(null, err)
+                    val bitmap = data?.extras?.get("data") as? android.graphics.Bitmap
+                    if (bitmap != null) {
+                        val stream = java.io.ByteArrayOutputStream()
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, stream)
+                        cb(JSONObject().apply { put("base64", Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)) }, null)
+                    } else cb(null, "Failed to capture image")
+                }
             }
         }
         registerHandler("system.media.pickImage") { p, cb ->
             val intent = Intent(Intent.ACTION_PICK, android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-            intentFragment.launchIntent(intent) { data, err ->
-                if (err != null) return@launchIntent cb(null, err)
-                val uri = data?.data
-                if (uri != null) {
-                    try {
-                        val stream = activity.contentResolver.openInputStream(uri)
-                        val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
-                        val out = java.io.ByteArrayOutputStream()
-                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 60, out)
-                        cb(JSONObject().apply { put("base64", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)) }, null)
-                    } catch (e: Exception) { cb(null, e.message) }
-                } else cb(null, "No image selected")
+            mainHandler.post {
+                intentFragment.launchIntent(intent) { data, err ->
+                    if (err != null) return@launchIntent cb(null, err)
+                    val uri = data?.data
+                    if (uri != null) {
+                        try {
+                            val stream = activity.contentResolver.openInputStream(uri)
+                            val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
+                            val out = java.io.ByteArrayOutputStream()
+                            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 60, out)
+                            cb(JSONObject().apply { put("base64", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)) }, null)
+                        } catch (e: Exception) { cb(null, e.message) }
+                    } else cb(null, "No image selected")
+                }
             }
         }
         registerHandler("system.media.downloadImage") { p, cb ->
@@ -400,7 +410,9 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
                 val bytes = Base64.decode(p.optString("base64Data"), Base64.DEFAULT)
                 val file = java.io.File(activity.cacheDir, p.optString("fileName", "shared_image.png"))
                 file.writeBytes(bytes)
-                val uri = androidx.core.content.FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
+                val authority = "${activity.packageName}.webnativebridge.fileprovider"
+                val uri = androidx.core.content.FileProvider.getUriForFile(activity, authority, file)
+                
                 val intent = Intent(Intent.ACTION_SEND).apply {
                     type = "image/*"
                     putExtra(Intent.EXTRA_STREAM, uri)
@@ -415,15 +427,16 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
                 val bytes = Base64.decode(p.optString("base64Data"), Base64.DEFAULT)
                 val file = java.io.File(activity.cacheDir, p.optString("fileName", "shared_video.mp4"))
                 file.writeBytes(bytes)
-                val uri = androidx.core.content.FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
+                val authority = "${activity.packageName}.webnativebridge.fileprovider"
+                val uri = androidx.core.content.FileProvider.getUriForFile(activity, authority, file)
+                
                 val intent = Intent(Intent.ACTION_SEND).apply {
                     type = "video/*"
                     putExtra(Intent.EXTRA_STREAM, uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 activity.startActivity(Intent.createChooser(intent, "Share Video"))
-                cb(true, null)
-            } catch (e: Exception) { cb(false, e.message) }
+                cb(true, null)            } catch (e: Exception) { cb(false, e.message) }
         }
 
         // --- COMMUNICATION ---
