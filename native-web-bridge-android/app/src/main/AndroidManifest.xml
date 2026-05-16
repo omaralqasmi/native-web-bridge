@@ -8,7 +8,7 @@
             android:grantUriPermissions="true">
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/native_web_bridge_shared_media" />
+                android:resource="@xml/native_web_bridge_file_paths" />
         </provider>
     </application>
 </manifest>
