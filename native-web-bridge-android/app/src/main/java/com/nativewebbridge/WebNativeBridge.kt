@@ -30,7 +30,8 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
         webView.addJavascriptInterface(this, "AndroidInterface")
         setupLifecycleHooks()
         setupKeyboardListener()
-        setupNetworkListener() // Added for live events!
+        setupNetworkListener() 
+        setupBackButtonListener() // 👈 Auto-intercepts physical back button!
         registerDefaultHandlers()
     }
 
@@ -61,6 +62,14 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
         cm.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: android.net.Network) { sendCommandToWeb("event.network.statusChanged", JSONObject().apply { put("connected", true); put("type", "unknown") }) }
             override fun onLost(network: android.net.Network) { sendCommandToWeb("event.network.statusChanged", JSONObject().apply { put("connected", false); put("type", "none") }) }
+        })
+    }
+
+    private fun setupBackButtonListener() {
+        activity.onBackPressedDispatcher.addCallback(activity, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                sendCommandToWeb("event.app.backButton")
+            }
         })
     }
 
@@ -119,7 +128,14 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
             cb(JSONObject().apply { put("connected", caps != null); put("type", type) }, null)
         }
 
-        fun getManifestPerm(type: String): String? = when(type) { "camera" -> android.Manifest.permission.CAMERA; "location" -> android.Manifest.permission.ACCESS_FINE_LOCATION; "contacts" -> android.Manifest.permission.READ_CONTACTS; else -> null }
+        fun getManifestPerm(type: String): String? = when(type) { 
+            "camera" -> android.Manifest.permission.CAMERA
+            "location" -> android.Manifest.permission.ACCESS_FINE_LOCATION
+            "contacts" -> android.Manifest.permission.READ_CONTACTS
+            "notifications" -> if (android.os.Build.VERSION.SDK_INT >= 33) "android.permission.POST_NOTIFICATIONS" else null
+            else -> null 
+        }
+        
         registerHandler("system.permissions.check") { p, cb -> val perm = getManifestPerm(p.optString("type")); if (perm != null) cb(androidx.core.content.ContextCompat.checkSelfPermission(activity, perm) == android.content.pm.PackageManager.PERMISSION_GRANTED, null) else cb(true, null) }
         registerHandler("system.permissions.request") { p, cb -> val perm = getManifestPerm(p.optString("type")); if (perm != null) mainHandler.post { intentFragment.requestPermission(perm) { cb(it, null) } } else cb(true, null) }
 

@@ -78,8 +78,10 @@
 
           <div class="method-group">
             <h3>Auth & Notifications</h3>
-            <span class="action-badge"><button @click="execute('permissions.check', () => bridge.permissions.check('camera'))">Check Camera Perm</button><button class="btn-info" @click="openDoc('checkPerm')">?</button></span>
-            <span class="action-badge"><button @click="execute('permissions.request', () => bridge.permissions.request('camera'))">Req Camera Perm</button><button class="btn-info" @click="openDoc('requestPermission')">?</button></span>
+            <span class="action-badge"><button @click="execute('permissions.check(camera)', () => bridge.permissions.check('camera'))">Check Camera Perm</button><button class="btn-info" @click="openDoc('checkPerm')">?</button></span>
+            <span class="action-badge"><button @click="execute('permissions.request(camera)', () => bridge.permissions.request('camera'))">Req Camera Perm</button><button class="btn-info" @click="openDoc('requestPermission')">?</button></span>
+            <span class="action-badge"><button @click="execute('permissions.check(notifications)', () => bridge.permissions.check('notifications'))">Check Push Perm</button><button class="btn-info" @click="openDoc('checkPush')">?</button></span>
+            <span class="action-badge"><button @click="execute('permissions.request(notifications)', () => bridge.permissions.request('notifications'))">Req Push Perm</button><button class="btn-info" @click="openDoc('reqPush')">?</button></span>
             <span class="action-badge"><button @click="execute('biometrics.authenticate', () => bridge.biometrics.authenticate('Unlock'))">Biometrics Auth</button><button class="btn-info" @click="openDoc('biometricsAuth')">?</button></span>
             <span class="action-badge"><button @click="execute('notifications.getToken', () => bridge.notifications.getToken())">Get Push Token</button><button class="btn-info" @click="openDoc('getToken')">?</button></span>
             <span class="action-badge"><button @click="execute('notifications.setToken', () => bridge.notifications.setToken('xyz.123'))">Set Push Token</button><button class="btn-info" @click="openDoc('setToken')">?</button></span>
@@ -130,14 +132,13 @@ const logs = ref<any[]>([]);
 
 interface DocEntry { title: string; why: string; when: string; how: string; }
 const docDB: Record<string, DocEntry> = {
-  // New Methods added to ensure parity
   requestRating: { title: 'Request Rating', why: 'Prompts users to review your app.', when: 'Call this after user achieves a milestone natively.', how: 'await bridge.app.requestRating();' },
   forceUpdate: { title: 'Force Update', why: 'Directs user to App Store/Play Store.', when: 'When the API version is deprecated.', how: "await bridge.app.forceUpdate('https://...');" },
   setTheme: { title: 'Set Theme', why: 'Forces Native UI to match Web UI.', when: 'When user overrides device theme in your settings.', how: "await bridge.ui.setTheme('dark');" },
   downloadImage: { title: 'Download Image', why: 'Saves images to user camera roll natively.', when: 'Exporting generated memes or receipts.', how: "await bridge.media.downloadImage('https://...');" },
   shareText: { title: 'Share Text', why: 'Invokes OS share sheet.', when: 'Sharing quotes or plain urls.', how: "await bridge.share.text('Check this out!');" },
   shareLink: { title: 'Share Link', why: 'Shares formatted URLs.', when: 'Sharing invites.', how: "await bridge.share.link('https://google.com');" },
-  dial: { title: 'Dial Number', why: 'Opens Native Phone app.', when: 'User clicks Customer Support.', how: "await bridge.communication.dial('123456');" },
+  dial: { title: 'Dial Number', why: 'Opens Native Phone app.', when: 'User clicks Customer Support.', how: "await bridge.communication.dialNumber('123456');" },
   openBrowser: { title: 'Open Browser', why: 'Escapes WebView to Chrome/Safari.', when: 'Opening external privacy policies.', how: "await bridge.communication.openBrowser('https://...');" },
   setSecure: { title: 'Secure Storage Set', why: 'Saves tokens to Keychain/EncryptedPrefs.', when: 'After login.', how: "await bridge.secureStorage.setItem('jwt', '...');" },
   getSecure: { title: 'Secure Storage Get', why: 'Retrieves encrypted tokens.', when: 'On app boot.', how: "await bridge.secureStorage.getItem('jwt');" },
@@ -146,8 +147,8 @@ const docDB: Record<string, DocEntry> = {
   getToken: { title: 'Get Push Token', why: 'Reads FCM/APNs token.', when: 'Registering devices to backend.', how: "await bridge.notifications.getToken();" },
   setToken: { title: 'Set Push Token', why: 'Stores FCM/APNs token natively.', when: 'Fired by Firebase SDK.', how: "await bridge.notifications.setToken('xyz...');" },
   checkPerm: { title: 'Check Permission', why: 'Verifies OS access safely.', when: 'Before opening custom camera UI.', how: "await bridge.permissions.check('camera');" },
-  
-  // Previous entries...
+  checkPush: { title: 'Check Notification Permission', why: 'To see if the user has silenced or blocked your alerts.', when: 'On boot, so you can show a banner asking them to enable alerts in Settings if disabled.', how: "const isEnabled = await bridge.permissions.check('notifications');" },
+  reqPush: { title: 'Request Notification Permission', why: 'To ask the OS to allow banners, sounds, and badges.', when: 'After the user completes a key action (like placing an order) so they understand WHY you need to notify them.', how: "const granted = await bridge.permissions.request('notifications');" },
   shareImage: { title: 'Share Image', why: 'Share asset natively.', when: 'Sharing photos.', how: "await bridge.share.image(base64, 'export.png');" },
   shareVideo: { title: 'Share Video', why: 'Share video file natively.', when: 'Exporting screen captures.', how: "await bridge.share.video(base64, 'export.mp4');" },
   customRequest: { title: 'Custom Request', why: 'Trigger Android/iOS logic.', when: 'Using custom native SDKs.', how: "await bridge.custom.invoke('custom.scan');" },
@@ -213,7 +214,6 @@ onUnmounted(() => unsubs.forEach(u => u()));
 </script>
 
 <style scoped>
-/* Exact same CSS styles from your previous file remain here... */
 .harness-container { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; color: #333; }
 .header { text-align: center; margin-bottom: 30px; } .header h1 { margin: 0 0 5px 0; color: #2c3e50; } .header p { margin: 0; color: #666; }
 .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }

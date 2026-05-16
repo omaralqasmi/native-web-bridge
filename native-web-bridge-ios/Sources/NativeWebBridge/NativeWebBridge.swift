@@ -7,6 +7,7 @@ import ContactsUI
 import CoreLocation
 import Network
 import StoreKit
+import UserNotifications
 
 class WebNativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDelegate {
     
@@ -78,8 +79,29 @@ class WebNativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDelega
         registerHandler(action: "system.device.getBatteryLevel") { _, cb in UIDevice.current.isBatteryMonitoringEnabled = true; let lvl = Int(UIDevice.current.batteryLevel * 100); cb(lvl >= 0 ? lvl : 100, nil) }
         registerHandler(action: "system.screen.setKeepScreenOn") { p, cb in DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = p["keepOn"] as? Bool ?? true; cb(true, nil) } }
         registerHandler(action: "system.network.getStatus") { [weak self] _, cb in let p = self?.networkMonitor.currentPath; cb(["connected": p?.status == .satisfied, "type": p?.usesInterfaceType(.wifi) == true ? "wifi" : (p?.usesInterfaceType(.cellular) == true ? "cellular" : "none")], nil) }
-        registerHandler(action: "system.permissions.check") { p, cb in cb(true, nil) } // Expand per required iOS entitlement
-        registerHandler(action: "system.permissions.request") { p, cb in if p["type"] as? String == "camera" { AVCaptureDevice.requestAccess(for: .video) { g in cb(g, nil) } } else { cb(true, nil) } }
+        
+        registerHandler(action: "system.permissions.check") { p, cb in
+            let type = p["type"] as? String ?? ""
+            if type == "camera" {
+                cb(AVCaptureDevice.authorizationStatus(for: .video) == .authorized, nil)
+            } else if type == "notifications" {
+                UNUserNotificationCenter.current().getNotificationSettings { settings in
+                    DispatchQueue.main.async { cb(settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional, nil) }
+                }
+            } else { cb(true, nil) }
+        }
+        
+        registerHandler(action: "system.permissions.request") { p, cb in
+            let type = p["type"] as? String ?? ""
+            if type == "camera" {
+                AVCaptureDevice.requestAccess(for: .video) { granted in DispatchQueue.main.async { cb(granted, nil) } }
+            } else if type == "notifications" {
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
+                    DispatchQueue.main.async { cb(granted, error?.localizedDescription) }
+                }
+            } else { cb(true, nil) }
+        }
+        
         registerHandler(action: "system.location.getCurrent") { [weak self] _, cb in DispatchQueue.main.async { self?.activeCallback = cb; self?.locationManager.requestWhenInUseAuthorization(); self?.locationManager.requestLocation() } }
         registerHandler(action: "system.audio.playSound") { _, cb in AudioServicesPlaySystemSound(1003); cb(true, nil) }
         
