@@ -93,6 +93,7 @@ export declare const bridge: {
         requestRating: () => Promise<any>;
         forceUpdate: (storeUrl?: string) => Promise<any>;
         exit: () => Promise<any>;
+        clearCaches: () => Promise<any>;
     };
     ui: {
         setTheme: (theme: "light" | "dark" | "system") => Promise<any>;

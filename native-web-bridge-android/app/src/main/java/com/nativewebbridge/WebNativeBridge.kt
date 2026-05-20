@@ -182,5 +182,21 @@ class WebNativeBridge(private val activity: FragmentActivity, private val webVie
         registerHandler("system.clipboard.read") { _, cb -> cb((activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClip?.getItemAt(0)?.text?.toString() ?: "", null) }
 
         registerHandler("system.biometrics.authenticate") { p, cb -> mainHandler.post { val e = androidx.core.content.ContextCompat.getMainExecutor(activity); androidx.biometric.BiometricPrompt(activity, e, object : androidx.biometric.BiometricPrompt.AuthenticationCallback() { override fun onAuthenticationError(c: Int, s: CharSequence) { cb(false, s.toString()) }; override fun onAuthenticationSucceeded(r: androidx.biometric.BiometricPrompt.AuthenticationResult) { cb(true, null) }; override fun onAuthenticationFailed() { cb(false, "Failed") } }).authenticate(androidx.biometric.BiometricPrompt.PromptInfo.Builder().setTitle("Authenticate").setSubtitle(p.optString("reason", "Please authenticate")).setNegativeButtonText("Cancel").build()) } }
+        registerHandler("system.app.clearCaches") { _, cb ->
+                    mainHandler.post {
+                        // 1. Clear standard WebView resource/network cache (true = include disk files)
+                        webView.clearCache(true)
+                        
+                        // 2. Clear HTML5 LocalStorage, IndexedDB, and AppCache
+                        android.webkit.WebStorage.getInstance().deleteAllData()
+                        
+                        // 3. (Optional but recommended) Clear Cookies
+                        android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                        android.webkit.CookieManager.getInstance().flush()
+
+                        cb(true, null)
+                    }
+                }
+
     }
 }

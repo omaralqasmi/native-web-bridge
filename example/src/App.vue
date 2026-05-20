@@ -31,6 +31,10 @@
             <span class="action-badge"><button @click="execute('app.requestRating', () => bridge.app.requestRating())">Request Rating</button><button class="btn-info" @click="openDoc('requestRating')">?</button></span>
             <span class="action-badge"><button @click="execute('app.forceUpdate', () => bridge.app.forceUpdate())">Force Update</button><button class="btn-info" @click="openDoc('forceUpdate')">?</button></span>
             <span class="action-badge"><button @click="execute('app.exit', () => bridge.app.exit())">Exit App</button><button class="btn-info" @click="openDoc('exitApp')">?</button></span>
+            <span class="action-badge">
+              <button @click="execute('app.clearCaches', () => bridge.app.clearCaches())">Clear Caches</button>
+              <button class="btn-info" @click="openDoc('clearCaches')">?</button>
+            </span>
           </div>
 
           <div class="method-group">
@@ -132,55 +136,306 @@ const logs = ref<any[]>([]);
 
 interface DocEntry { title: string; why: string; when: string; how: string; }
 const docDB: Record<string, DocEntry> = {
-  requestRating: { title: 'Request Rating', why: 'Prompts users to review your app.', when: 'Call this after user achieves a milestone natively.', how: 'await bridge.app.requestRating();' },
-  forceUpdate: { title: 'Force Update', why: 'Directs user to App Store/Play Store.', when: 'When the API version is deprecated.', how: "await bridge.app.forceUpdate('https://...');" },
-  setTheme: { title: 'Set Theme', why: 'Forces Native UI to match Web UI.', when: 'When user overrides device theme in your settings.', how: "await bridge.ui.setTheme('dark');" },
-  downloadImage: { title: 'Download Image', why: 'Saves images to user camera roll natively.', when: 'Exporting generated memes or receipts.', how: "await bridge.media.downloadImage('https://...');" },
-  shareText: { title: 'Share Text', why: 'Invokes OS share sheet.', when: 'Sharing quotes or plain urls.', how: "await bridge.share.text('Check this out!');" },
-  shareLink: { title: 'Share Link', why: 'Shares formatted URLs.', when: 'Sharing invites.', how: "await bridge.share.link('https://google.com');" },
-  dial: { title: 'Dial Number', why: 'Opens Native Phone app.', when: 'User clicks Customer Support.', how: "await bridge.communication.dialNumber('123456');" },
-  openBrowser: { title: 'Open Browser', why: 'Escapes WebView to Chrome/Safari.', when: 'Opening external privacy policies.', how: "await bridge.communication.openBrowser('https://...');" },
-  setSecure: { title: 'Secure Storage Set', why: 'Saves tokens to Keychain/EncryptedPrefs.', when: 'After login.', how: "await bridge.secureStorage.setItem('jwt', '...');" },
-  getSecure: { title: 'Secure Storage Get', why: 'Retrieves encrypted tokens.', when: 'On app boot.', how: "await bridge.secureStorage.getItem('jwt');" },
-  copyClip: { title: 'Copy Clipboard', why: 'Copies text natively.', when: 'Sharing referral codes.', how: "await bridge.clipboard.copy('CODE123');" },
-  readClip: { title: 'Read Clipboard', why: 'Reads text from OS.', when: 'Auto-pasting OTPs.', how: "await bridge.clipboard.read();" },
-  getToken: { title: 'Get Push Token', why: 'Reads FCM/APNs token.', when: 'Registering devices to backend.', how: "await bridge.notifications.getToken();" },
-  setToken: { title: 'Set Push Token', why: 'Stores FCM/APNs token natively.', when: 'Fired by Firebase SDK.', how: "await bridge.notifications.setToken('xyz...');" },
-  checkPerm: { title: 'Check Permission', why: 'Verifies OS access safely.', when: 'Before opening custom camera UI.', how: "await bridge.permissions.check('camera');" },
-  checkPush: { title: 'Check Notification Permission', why: 'To see if the user has silenced or blocked your alerts.', when: 'On boot, so you can show a banner asking them to enable alerts in Settings if disabled.', how: "const isEnabled = await bridge.permissions.check('notifications');" },
-  reqPush: { title: 'Request Notification Permission', why: 'To ask the OS to allow banners, sounds, and badges.', when: 'After the user completes a key action (like placing an order) so they understand WHY you need to notify them.', how: "const granted = await bridge.permissions.request('notifications');" },
-  shareImage: { title: 'Share Image', why: 'Share asset natively.', when: 'Sharing photos.', how: "await bridge.share.image(base64, 'export.png');" },
-  shareVideo: { title: 'Share Video', why: 'Share video file natively.', when: 'Exporting screen captures.', how: "await bridge.share.video(base64, 'export.mp4');" },
-  customRequest: { title: 'Custom Request', why: 'Trigger Android/iOS logic.', when: 'Using custom native SDKs.', how: "await bridge.custom.invoke('custom.scan');" },
-  customCommand: { title: 'Custom Command', why: 'Trigger logic without reply.', when: 'Fire and Forget tasks.', how: "bridge.custom.send('track');" },
-  signalWebReady: { title: 'Signal Web Ready', why: 'Prevent boot race conditions.', when: 'In onMounted.', how: 'bridge.core.signalWebReady();' },
-  getComplete: { title: 'Get Device Info', why: 'Analytics & specs.', when: 'Bug reports.', how: 'await bridge.info.getComplete();' },
-  getLanguage: { title: 'Get OS Language', why: 'Localize app.', when: 'On boot.', how: "await bridge.device.getLanguage();" },
-  getBatteryLevel: { title: 'Get Battery', why: 'Adapt performance.', when: 'Running heavy 3D.', how: 'await bridge.device.getBatteryLevel();' },
-  setKeepScreenOn: { title: 'Keep Screen On', why: 'Prevent sleep.', when: 'Displaying barcode.', how: 'await bridge.screen.setKeepScreenOn(true);' },
-  openSettings: { title: 'Open Settings', why: 'Fix permissions.', when: 'Permission denied.', how: 'await bridge.app.openSettings();' },
-  exitApp: { title: 'Exit App', why: 'Close app.', when: 'Logout.', how: 'await bridge.app.exit();' },
-  getStatus: { title: 'Network Status', why: 'Check internet.', when: 'Before upload.', how: 'await bridge.network.getStatus();' },
-  getCurrentLocation: { title: 'Get GPS', why: 'Coords.', when: 'Maps.', how: 'await bridge.location.getCurrent();' },
-  triggerHaptic: { title: 'Haptics', why: 'Native feel.', when: 'Button click.', how: "await bridge.hardware.triggerHaptic('heavy');" },
-  toggleFlashlight: { title: 'Flashlight', why: 'Illuminate.', when: 'Scanner UI.', how: 'await bridge.hardware.toggleFlashlight(true);' },
-  showToast: { title: 'Toast', why: 'Quick alert.', when: 'Saved profile.', how: "await bridge.ui.showToast('Saved');" },
-  showAlert: { title: 'Alert', why: 'Blocking alert.', when: 'Error.', how: "await bridge.ui.showAlert('Err', 'Msg');" },
-  showConfirm: { title: 'Confirm', why: 'Yes/No.', when: 'Delete items.', how: "await bridge.ui.showConfirm('Del?', 'Sure?');" },
-  getTheme: { title: 'Get OS Theme', why: 'Match OS.', when: 'Boot.', how: "await bridge.ui.getTheme();" },
-  takePhoto: { title: 'Take Photo', why: 'Camera.', when: 'Profile pic.', how: "await bridge.media.takePhoto();" },
-  pickImage: { title: 'Pick Image', why: 'Gallery.', when: 'Upload photo.', how: "await bridge.media.pickImage();" },
-  pickFile: { title: 'Pick File', why: 'Documents.', when: 'Upload PDF.', how: 'await bridge.file.pick();' },
-  pickContact: { title: 'Pick Contact', why: 'Address book.', when: 'Invites.', how: 'await bridge.contacts.pick();' },
-  playSystemSound: { title: 'Play Sound', why: 'Audible alert.', when: 'Message received.', how: 'await bridge.audio.playSystemSound();' },
-  requestPermission: { title: 'Request Perm', why: 'Prompt user.', when: 'Before APIs.', how: "await bridge.permissions.request('camera');" },
-  setItem: { title: 'Set Storage', why: 'Save data.', when: 'Offline cache.', how: "await bridge.storage.setItem('k', 'v');" },
-  getItem: { title: 'Get Storage', why: 'Read data.', when: 'Boot.', how: "await bridge.storage.getItem('k');" },
-  biometricsAuth: { title: 'Biometrics', why: 'FaceID/TouchID.', when: 'Unlock vault.', how: "await bridge.biometrics.authenticate();" },
-  eventAppPause: { title: 'App Pause/Resume', why: 'Lifecycle.', when: 'Stop/start video.', how: "bridge.events.onAppResume(() => {});" },
-  eventTheme: { title: 'Theme/Keyboard', why: 'UI states.', when: 'Swap CSS.', how: "bridge.events.onKeyboardChanged((p) => {});" },
-  eventDeepLink: { title: 'Links/Push/Network', why: 'System broadcasts.', when: 'Routing.', how: "bridge.events.onDeepLink((p) => {});" },
-  eventCustom: { title: 'Custom Listener', why: 'Native pushes.', when: 'Location tracking.', how: "bridge.custom.listen('data', (p) => {});" },
+  requestRating: { 
+    title: 'Request Rating', 
+    why: 'Triggers the native OS rating dialog (SKStoreReviewController on iOS, In-App Review API on Android) without forcing the user to leave your app.', 
+    when: 'Best used after a highly positive user interaction, such as successfully completing a purchase, finishing a difficult level, or saving a milestone.', 
+    how: "try {\n  await bridge.app.requestRating();\n  console.log('Rating prompt displayed');\n} catch (err) {\n  console.warn('OS blocked rating prompt:', err);\n}" 
+  },
+  forceUpdate: { 
+    title: 'Force Update', 
+    why: 'Directs the user out of the app directly to your specific App Store or Google Play Store listing.', 
+    when: 'Use this when your web API introduces breaking changes and the user\'s current app version is too old to safely continue.', 
+    how: "const isDeprecated = checkVersion();\nif (isDeprecated) {\n  await bridge.app.forceUpdate('https://play.google.com/store/apps/details?id=com.yourapp');\n}" 
+  },
+  setTheme: { 
+    title: 'Set Theme', 
+    why: 'Forces the Native OS container components (like status bars and alert dialogs) to perfectly match your Web UI\'s color scheme.', 
+    when: 'Call this the moment a user manually toggles the dark/light mode switch inside your web app settings.', 
+    how: "const newTheme = userPrefersDark ? 'dark' : 'light';\nawait bridge.ui.setTheme(newTheme);\ndocument.body.classList.toggle('dark-mode', userPrefersDark);" 
+  },
+  downloadImage: { 
+    title: 'Download Image', 
+    why: 'Bypasses browser download restrictions and saves an image securely to the user\'s native Camera Roll / Photo Gallery.', 
+    when: 'Perfect for exporting generated content like custom memes, QR codes, digital tickets, or payment receipts.', 
+    how: "const ticketUrl = 'https://myapp.com/ticket-123.png';\nawait bridge.media.downloadImage(ticketUrl);\nawait bridge.ui.showToast('Saved to Camera Roll!');" 
+  },
+  shareText: { 
+    title: 'Share Text', 
+    why: 'Invokes the native OS share sheet (UIActivityViewController / Intent.ACTION_SEND) to distribute raw text.', 
+    when: 'Use this to let users quickly text or tweet a funny quote, a promo code, or a high score.', 
+    how: "const promo = 'Use code SAVE20 for 20% off!';\nawait bridge.share.text(promo, 'Discount Code');" 
+  },
+  shareLink: { 
+    title: 'Share Link', 
+    why: 'Shares a formatted URL via the native OS, often triggering rich link previews in apps like iMessage or WhatsApp.', 
+    when: 'Ideal for "Invite a Friend", sharing a specific product page, or directing users to a shared workspace.', 
+    how: "const referralUrl = 'https://myapp.com/invite/omar99';\nawait bridge.share.link(referralUrl, 'Join me on the app!');" 
+  },
+  dial: { 
+    title: 'Dial Number', 
+    why: 'Suspends your app and opens the native Phone dialer with the number pre-filled.', 
+    when: 'Bind this to "Call Support", "Contact Driver", or "Call Restaurant" buttons.', 
+    how: "const driverPhone = '+1234567890';\nawait bridge.communication.dialNumber(driverPhone);" 
+  },
+  openBrowser: { 
+    title: 'Open External Browser', 
+    why: 'Escapes the WebView container to open a link in the user\'s default external browser (Safari/Chrome).', 
+    when: 'Crucial for viewing external Privacy Policies, Terms of Service, or third-party payment gateways like PayPal.', 
+    how: "const tosUrl = 'https://company.com/terms';\nawait bridge.communication.openBrowser(tosUrl);" 
+  },
+  setSecure: { 
+    title: 'Set Secure Storage', 
+    why: 'Saves sensitive string data into heavily encrypted, hardware-backed storage (iOS Keychain / Android EncryptedSharedPreferences).', 
+    when: 'Always use this immediately after login to securely store JWTs, OAuth tokens, or PIN codes. Never use Web LocalStorage for these!', 
+    how: "const authResponse = await login(user, pass);\nawait bridge.secureStorage.setItem('jwt_token', authResponse.token);" 
+  },
+  getSecure: { 
+    title: 'Get Secure Storage', 
+    why: 'Retrieves hardware-encrypted tokens seamlessly.', 
+    when: 'Call this during your app\'s initial boot sequence to check if a user session still exists and auto-login.', 
+    how: "const token = await bridge.secureStorage.getItem('jwt_token');\nif (token) {\n  store.commit('authenticate', token);\n}" 
+  },
+  copyClip: { 
+    title: 'Copy to Clipboard', 
+    why: 'Writes text directly to the native OS clipboard without relying on the finicky Web Clipboard API.', 
+    when: 'Use for "Copy to Clipboard" buttons next to referral codes, wallet addresses, or API keys.', 
+    how: "const walletAddress = '0x123abc...';\nawait bridge.clipboard.copy(walletAddress);\nawait bridge.ui.showToast('Address copied!');" 
+  },
+  readClip: { 
+    title: 'Read Clipboard', 
+    why: 'Reads the user\'s current clipboard text directly from the OS.', 
+    when: 'Extremely useful for auto-detecting and pasting One Time Passwords (OTPs), meeting links, or tracking numbers when the user opens the app.', 
+    how: "const clipText = await bridge.clipboard.read();\nif (clipText.startsWith('https://zoom.us')) {\n  joinMeeting(clipText);\n}" 
+  },
+  getToken: { 
+    title: 'Get Push Token', 
+    why: 'Retrieves the unique APNs (iOS) or FCM (Android) device token stored by your native wrapper.', 
+    when: 'Call this right after the user successfully registers or logs in, so you can save their hardware token to your database for targeting.', 
+    how: "const pushToken = await bridge.notifications.getToken();\nif (pushToken) {\n  await api.post('/users/devices', { token: pushToken });\n}" 
+  },
+  setToken: { 
+    title: 'Set Push Token', 
+    why: 'Allows the native wrapper to pass its newly generated FCM/APNs token down into the web environment.', 
+    when: 'Typically triggered by a custom native listener the moment the Firebase SDK initializes in the background.', 
+    how: "bridge.custom.listen('native_token_refresh', async (payload) => {\n  await bridge.notifications.setToken(payload.token);\n});" 
+  },
+  checkPerm: { 
+    title: 'Check Permission', 
+    why: 'Silently verifies if the OS has granted your app access to protected hardware without triggering a user popup.', 
+    when: 'Use this when rendering your UI. If camera access is denied, you can show a generic image upload button instead of a live viewfinder.', 
+    how: "const canUseCamera = await bridge.permissions.check('camera');\nshowScannerUI.value = canUseCamera;" 
+  },
+  checkPush: { 
+    title: 'Check Notification Permission', 
+    why: 'Checks if the user has silenced or blocked your app\'s alerts at the OS settings level.', 
+    when: 'Run this on the settings page to accurately reflect whether the user is actually receiving your alerts.', 
+    how: "const hasAlerts = await bridge.permissions.check('notifications');\nif (!hasAlerts) {\n  showEnableAlertsBanner = true;\n}" 
+  },
+  reqPush: { 
+    title: 'Request Notification Permission', 
+    why: 'Triggers the native OS modal asking the user to allow banners, sounds, and badges.', 
+    when: 'Never ask on boot! Ask immediately after the user completes a key action (like ordering food) so they understand *why* you need to notify them.', 
+    how: "const granted = await bridge.permissions.request('notifications');\nif (granted) {\n  console.log('User opted into alerts!');\n}" 
+  },
+  shareImage: { 
+    title: 'Share Image', 
+    why: 'Generates a secure, temporary file URI from a Base64 string and opens the native Share Sheet.', 
+    when: 'Allow users to export custom-generated certificates, edited photos, or data charts to Instagram, WhatsApp, or Email.', 
+    how: "const base64Canvas = myCanvas.toDataURL().split(',')[1];\nawait bridge.share.image(base64Canvas, 'chart_export.png');" 
+  },
+  shareVideo: { 
+    title: 'Share Video', 
+    why: 'Securely writes a Base64 video buffer to the native cache and exposes it to other apps via the Share Sheet.', 
+    when: 'Exporting recorded screen captures, generated animations, or downloaded media files directly to TikTok or Messages.', 
+    how: "const videoB64 = await renderVideo();\nawait bridge.share.video(videoB64, 'my_recording.mp4');" 
+  },
+  customRequest: { 
+    title: 'Custom Request', 
+    why: 'Sends a payload to a developer-defined Kotlin/Swift handler and *waits* for a JSON response.', 
+    when: 'Use this when you integrate a proprietary 3rd-party Native SDK (like a Bluetooth scanner or a custom payment gateway) and need data back.', 
+    how: "const scanResult = await bridge.custom.invoke('bt.scanBarcode', { timeout: 5000 });\nconsole.log('Barcode:', scanResult.data);" 
+  },
+  customCommand: { 
+    title: 'Custom Command', 
+    why: 'Fires a payload to the native OS and immediately moves on without waiting for a reply (Fire & Forget).', 
+    when: 'Perfect for high-volume, non-blocking tasks like sending analytics events to a native Firebase/Mixpanel SDK.', 
+    how: "bridge.custom.send('analytics.trackEvent', {\n  event: 'checkout_completed',\n  value: 99.99\n});" 
+  },
+  signalWebReady: { 
+    title: 'Signal Web Ready', 
+    why: 'Unlocks the native message queue. Prevents race conditions where Android/iOS fire boot events before Vue is ready to hear them.', 
+    when: 'Call this exactly ONCE in your root App.vue `onMounted` lifecycle hook.', 
+    how: "onMounted(() => {\n  bridge.core.signalWebReady();\n  console.log('Bridge is open for business!');\n});" 
+  },
+  getComplete: { 
+    title: 'Get Device Info', 
+    why: 'Gathers a comprehensive dictionary of hardware specifications and OS versions.', 
+    when: 'Attach this payload to crash reports, customer support tickets, or API headers for highly targeted debugging.', 
+    how: "const info = await bridge.info.getComplete();\napi.post('/logs/crash', {\n  error: e.message,\n  device: info.deviceModel,\n  os: info.osVersion\n});" 
+  },
+  getLanguage: { 
+    title: 'Get OS Language', 
+    why: 'Reads the exact locale tag directly from the user\'s hardware (e.g., "en-US", "fr-FR").', 
+    when: 'Use this on boot to automatically set your Vue-i18n locale to match the user\'s preference without making them choose.', 
+    how: "const osLocale = await bridge.device.getLanguage();\ni18n.global.locale.value = osLocale.split('-')[0];" 
+  },
+  getBatteryLevel: { 
+    title: 'Get Battery Level', 
+    why: 'Reads the real-time battery percentage from the device hardware.', 
+    when: 'Use this to degrade gracefully. If the battery is below 15%, pause heavy WebGL animations, stop background polling, or switch to dark mode.', 
+    how: "const battery = await bridge.device.getBatteryLevel();\nif (battery < 15) {\n  disableHeavyAnimations();\n}" 
+  },
+  setKeepScreenOn: { 
+    title: 'Keep Screen On', 
+    why: 'Overrides the OS idle timer, preventing the phone from going to sleep and locking.', 
+    when: 'Critical for displaying a QR code for a cashier to scan, during a live video call, or while following a cooking recipe.', 
+    how: "await bridge.screen.setKeepScreenOn(true);\n// Later, when done:\nawait bridge.screen.setKeepScreenOn(false);" 
+  },
+  openSettings: { 
+    title: 'Open App Settings', 
+    why: 'Deep-links the user directly to your specific app\'s page inside the native OS Settings app.', 
+    when: 'Use this as a fallback. If a user denies camera permission twice, the OS blocks further prompts. You must guide them here to flip the switch manually.', 
+    how: "const granted = await bridge.permissions.request('location');\nif (!granted) {\n  showUI('Please enable location in settings', () => bridge.app.openSettings());\n}" 
+  },
+  exitApp: { 
+    title: 'Exit Application', 
+    why: 'Programmatically kills the Android Activity.', 
+    when: 'Use on a strict "Logout & Quit" button, or if a critical forced update requires the app to completely restart. (Note: Ignored on iOS per Apple rules).', 
+    how: "await logoutUser();\nawait bridge.app.exit();" 
+  },
+  getStatus: { 
+    title: 'Network Status', 
+    why: 'Provides real-time boolean connectivity and connection type (wifi vs. cellular).', 
+    when: 'Check this before initiating massive file uploads or video streams to warn users if they are about to consume expensive cellular data.', 
+    how: "const net = await bridge.network.getStatus();\nif (net.type === 'cellular') {\n  await bridge.ui.showAlert('Warning', 'Large download on cellular data!');\n}" 
+  },
+  getCurrentLocation: { 
+    title: 'Get GPS Location', 
+    why: 'Fetches highly accurate latitude and longitude coordinates directly from the native CoreLocation/LocationManager.', 
+    when: 'Ideal for delivery tracking, mapping stores, or checking in. Make sure you call permissions.request("location") first!', 
+    how: "try {\n  const { lat, lng } = await bridge.location.getCurrent();\n  map.setCenter({ lat, lng });\n} catch (e) {\n  console.error('GPS unavailable', e);\n}" 
+  },
+  triggerHaptic: { 
+    title: 'Trigger Haptic Feedback', 
+    why: 'Fires the physical vibration motors in the device (Taptic Engine / Vibrator API).', 
+    when: 'Sprinkle this on primary UI interactions: "light" for typing, "medium" for pull-to-refresh, and "heavy" for error states or success checkmarks.', 
+    how: "submitForm();\nawait bridge.hardware.triggerHaptic('medium');" 
+  },
+  toggleFlashlight: { 
+    title: 'Toggle Flashlight', 
+    why: 'Takes control of the device\'s rear camera LED.', 
+    when: 'Place a flashlight toggle button directly inside your custom barcode or document scanning UI to assist users in dark environments.', 
+    how: "let isFlashOn = false;\ntoggleBtn.onClick = async () => {\n  isFlashOn = !isFlashOn;\n  await bridge.hardware.toggleFlashlight(isFlashOn);\n};" 
+  },
+  showToast: { 
+    title: 'Show Toast', 
+    why: 'Displays a brief, unobtrusive OS-level text overlay that disappears automatically.', 
+    when: 'Perfect for non-critical confirmations that shouldn\'t interrupt the user\'s flow (e.g., "Profile Saved", "Link Copied").', 
+    how: "await saveProfile();\nawait bridge.ui.showToast('Profile successfully saved!', 'short');" 
+  },
+  showAlert: { 
+    title: 'Show Native Alert', 
+    why: 'Summons a native, blocking dialog box (UIAlertController / AlertDialog) that requires user dismissal.', 
+    when: 'Use for critical, unavoidable information like "Payment Failed" or "Session Expired". Native alerts feel much more official than web modals.', 
+    how: "try {\n  await processPayment();\n} catch (e) {\n  await bridge.ui.showAlert('Transaction Failed', e.message, 'Understood');\n}" 
+  },
+  showConfirm: { 
+    title: 'Show Native Confirm', 
+    why: 'Displays a native dialog with two distinct choices, returning a boolean based on the user\'s selection.', 
+    when: 'Always use this before destructive actions (deleting an account, clearing data) or before navigating away from unsaved form changes.', 
+    how: "const isSure = await bridge.ui.showConfirm('Delete Account', 'This is permanent. Are you sure?', 'Delete', 'Cancel');\nif (isSure) { deleteUser(); }" 
+  },
+  getTheme: { 
+    title: 'Get OS Theme', 
+    why: 'Checks if the user\'s OS is currently running in Dark Mode or Light Mode.', 
+    when: 'Call this on application boot to immediately initialize your CSS variables or Tailwind classes to match the system.', 
+    how: "const systemTheme = await bridge.ui.getTheme();\nif (systemTheme === 'dark') {\n  enableDarkMode();\n}" 
+  },
+  takePhoto: { 
+    title: 'Take Photo', 
+    why: 'Opens the full-screen native Camera application and returns the captured image as a Base64 string.', 
+    when: 'Use for Avatar updates, KYC document scanning, or attaching photo receipts to expense reports.', 
+    how: "const photo = await bridge.media.takePhoto({ base64: true });\nif (photo?.base64) {\n  avatarUrl.value = `data:image/jpeg;base64,${photo.base64}`;\n}" 
+  },
+  pickImage: { 
+    title: 'Pick Image', 
+    why: 'Opens the native Photo Library / Gallery so the user can select existing media.', 
+    when: 'Whenever a user needs to upload a profile picture or select an existing photo from their camera roll.', 
+    how: "const selection = await bridge.media.pickImage({ base64: true });\nif (selection) {\n  uploadToS3(selection.base64);\n}" 
+  },
+  pickFile: { 
+    title: 'Pick File', 
+    why: 'Triggers the native OS file browser (Files app / Document Picker) to select PDFs, Docs, or Data files.', 
+    when: 'Provides a far superior, native user experience compared to the standard HTML `<input type="file">`.', 
+    how: "const file = await bridge.file.pick();\nif (file) {\n  console.log(`Uploading ${file.name}...`);\n  await uploadBase64(file.base64);\n}" 
+  },
+  pickContact: { 
+    title: 'Pick Contact', 
+    why: 'Opens the native Address Book and securely extracts the selected person\'s name and phone number.', 
+    when: 'Essential for features like "Invite a Friend", "Emergency Contact", or quickly transferring funds to an acquaintance.', 
+    how: "const contact = await bridge.contacts.pick();\nif (contact) {\n  inviteInput.value = contact.phoneNumber;\n  await bridge.ui.showToast(`Inviting ${contact.name}...`);\n}" 
+  },
+  playSystemSound: { 
+    title: 'Play System Sound', 
+    why: 'Triggers the default OS notification ping.', 
+    when: 'Use this audibly alert the user when a long-running background task finishes, a timer expires, or a new real-time chat message arrives.', 
+    how: "chatSocket.on('new_message', async (msg) => {\n  renderMessage(msg);\n  await bridge.audio.playSystemSound();\n});" 
+  },
+  requestPermission: { 
+    title: 'Request Permission', 
+    why: 'Safely triggers the native OS modal asking the user to grant access to restricted hardware/software.', 
+    when: 'Always call this *before* attempting to use the Camera, Location, or Contacts APIs. Handle the boolean result gracefully.', 
+    how: "const granted = await bridge.permissions.request('camera');\nif (granted) {\n  openBarcodeScanner();\n} else {\n  showManualEntryForm();\n}" 
+  },
+  setItem: { 
+    title: 'Set Storage', 
+    why: 'Saves standard key-value data directly to the native OS storage (UserDefaults / SharedPreferences).', 
+    when: 'Perfect for saving non-sensitive preferences (like "hasSeenTutorial") that must survive even if the WebView cache is completely wiped.', 
+    how: "await bridge.storage.setItem('has_seen_onboarding', true);\nconsole.log('Preference saved natively');" 
+  },
+  getItem: { 
+    title: 'Get Storage', 
+    why: 'Retrieves standard key-value data from the native OS.', 
+    when: 'Check this on boot to determine routing, such as skipping the welcome carousel if the user has been here before.', 
+    how: "const hasSeen = await bridge.storage.getItem('has_seen_onboarding');\nif (!hasSeen) {\n  router.push('/welcome');\n}" 
+  },
+  biometricsAuth: { 
+    title: 'Biometrics Authentication', 
+    why: 'Summons FaceID, TouchID, or the Android Biometric Prompt to verify the physical user\'s identity.', 
+    when: 'Force authentication before exposing highly sensitive screens like Payment Methods, Password Vaults, or Security Settings.', 
+    how: "const passed = await bridge.biometrics.authenticate('Verify identity to view wallet');\nif (passed) {\n  showWalletKey();\n} else {\n  router.push('/dashboard');\n}" 
+  },
+  eventAppPause: { 
+    title: 'App Pause & Resume', 
+    why: 'Listens for background/foreground lifecycle events broadcasted by the OS.', 
+    when: 'Use `onAppPause` to pause videos, halt WebGL loops, or close WebSockets. Use `onAppResume` to reconnect and fetch fresh data.', 
+    how: "bridge.events.onAppResume(async () => {\n  console.log('User came back!');\n  await fetchLatestData();\n});" 
+  },
+  eventTheme: { 
+    title: 'Theme & Keyboard Events', 
+    why: 'Listens for sudden UI state changes, like the virtual keyboard sliding up or the OS theme changing at sunset.', 
+    when: 'Use `onKeyboardChanged` to dynamically hide sticky bottom navbars so they don\'t overlap the input field.', 
+    how: "bridge.events.onKeyboardChanged(({ isVisible }) => {\n  document.getElementById('bottom-nav').style.display = isVisible ? 'none' : 'flex';\n});" 
+  },
+  eventDeepLink: { 
+    title: 'Deep Links & Network Events', 
+    why: 'Catches critical OS broadcasts, like the user losing WiFi or clicking an external URL that opens your app.', 
+    when: 'Use `onDeepLink` to intercept custom URLs (myapp://product/123) and programmatically drive your Vue Router to the right page.', 
+    how: "bridge.events.onDeepLink(({ url }) => {\n  const route = extractPath(url);\n  router.push(route);\n});" 
+  },
+  eventCustom: { 
+    title: 'Custom Event Listener', 
+    why: 'Attaches a persistent listener to ingest continuous, real-time data pushed by custom native code.', 
+    when: 'Use this to pipe data from complex native background services, like live Bluetooth scanner streams or constant GPS tracking.', 
+    how: "bridge.custom.listen('native.sensor.heartrate', (payload) => {\n  bpm.value = payload.rate;\n  updateChart(payload.rate);\n});" 
+  },
+  clearCaches: { 
+    title: 'Clear App Caches', 
+    why: 'A nuclear option that wipes all WebView data, including the Network Cache, LocalStorage, IndexedDB, and Cookies.', 
+    when: 'Use this immediately before triggering a full page reload to force the native wrapper to download your newest Vue.js UI update.', 
+    how: "await bridge.app.clearCaches();\n// Cache busted, safe to reload:\nwindow.location.assign('https://myapp.com/?t=' + Date.now());" 
+  }
 };
 
 const openDoc = (key: string) => { activeDoc.value = docDB[key]; };

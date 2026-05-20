@@ -109,7 +109,17 @@ class WebNativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDelega
         registerHandler(action: "system.app.requestRating") { _, cb in DispatchQueue.main.async { if let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene { SKStoreReviewController.requestReview(in: scene) }; cb(true, nil) } }
         registerHandler(action: "system.app.forceUpdate") { p, cb in DispatchQueue.main.async { if let url = URL(string: p["url"] as? String ?? "itms-apps://itunes.apple.com/") { UIApplication.shared.open(url) }; cb(true, nil) } }
         registerHandler(action: "system.app.exit") { _, cb in cb(false, "Apple forbids programmatic exits.") }
-        
+        registerHandler(action: "system.app.clearCaches") { _, cb in
+            DispatchQueue.main.async {
+                let dataStore = WKWebsiteDataStore.default()
+                let allTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+                
+                // Wipe all website data from the dawn of time (1970)
+                dataStore.removeData(ofTypes: allTypes, modifiedSince: Date(timeIntervalSince1970: 0)) {
+                    cb(true, nil)
+                }
+            }
+        }
         registerHandler(action: "system.ui.getTheme") { _, cb in DispatchQueue.main.async { cb(UIScreen.main.traitCollection.userInterfaceStyle == .dark ? "dark" : "light", nil) } }
         registerHandler(action: "system.ui.setTheme") { [weak self] p, cb in DispatchQueue.main.async { let t = p["theme"] as? String; self?.viewController?.view.window?.overrideUserInterfaceStyle = t == "dark" ? .dark : (t == "light" ? .light : .unspecified); cb(true, nil) } }
         registerHandler(action: "system.ui.showToast") { [weak self] p, cb in DispatchQueue.main.async { let a = UIAlertController(title: nil, message: p["message"] as? String, preferredStyle: .alert); self?.viewController?.present(a, animated: true); DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { a.dismiss(animated: true); cb(true, nil) } } }

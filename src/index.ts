@@ -224,7 +224,8 @@ export const bridge = {
         openSettings: () => core.request('system.app.openSettings'),
         requestRating: () => core.request('system.app.requestRating'),
         forceUpdate: (storeUrl?: string) => core.request('system.app.forceUpdate', { url: storeUrl }),
-        exit: () => core.request('system.app.exit')
+        exit: () => core.request('system.app.exit'),
+        clearCaches: () => core.request('system.app.clearCaches')
     },
     ui: {
         setTheme: (theme: 'light' | 'dark' | 'system') => core.request('system.ui.setTheme', { theme }),
